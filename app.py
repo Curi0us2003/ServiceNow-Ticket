@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 
-EXCEL_FILE_PATH = r"C:\Users\RitabrataRoyChoudhur\OneDrive - GyanSys Inc\Desktop\Python\ServiceNow\tickets.xlsx"
+EXCEL_FILE_PATH = r"FILE_PATH_FOR_THE_EXCEL"
 SHEET_NAME = "RawData"
 DEFAULT_THRESHOLD = 0.75
 REQUIRED_COLUMNS = ['Number', 'Short Description', 'Correct CI', 'Resolved by', 'Created AMER', 'Assignment group', 'Customer']
