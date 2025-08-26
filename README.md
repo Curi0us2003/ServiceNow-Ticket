@@ -66,7 +66,7 @@ pip install flask pandas numpy scikit-learn googletrans==4.0.0rc1 openpyxl
 Update the file path in `app.py`:
 
 ```python
-EXCEL_FILE_PATH = r"C:\path\to\your\tickets_Analysis_1.xlsx"
+EXCEL_FILE_PATH = r"FILE_PATH_FOR_EXCEL"
 SHEET_NAME = "RawData"  # Your sheet name
 ```
 
