@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Ticket Similarity Analysis</title>
+    <title>Open vs Closed Ticket Similarity Analysis</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet" />
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
     <style>
         body {
             background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
         .card {
             border: none;
@@ -22,7 +23,7 @@
             border-left: 4px solid #dc3545;
         }
         .similarity-score {
-            font-size: 1.2em;
+            font-size: 1.1em;
             font-weight: bold;
         }
         .ticket-table {
@@ -33,14 +34,19 @@
             border-top: none;
             font-weight: 600;
         }
-        .group-header {
-            background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+        .open-ticket-header {
+            background: linear-gradient(45deg, #dc3545 0%, #fd7e14 100%);
+            color: white;
+        }
+        .closed-ticket-header {
+            background: linear-gradient(45deg, #28a745 0%, #20c997 100%);
             color: white;
         }
         .original-text {
             font-style: italic;
             color: #6c757d;
             font-size: 0.85em;
+            margin-top: 0.25rem;
         }
         .translation-badge {
             font-size: 0.7em;
@@ -61,13 +67,45 @@
             color: white;
         }
         
-        /* Drill-down styles */
+        /* Match styling */
+        .match-container {
+            border-left: 4px solid #28a745;
+            background-color: #f8f9fa;
+        }
+        .open-ticket-card {
+            border-left: 4px solid #dc3545;
+        }
+        .closed-ticket-badge {
+            background: linear-gradient(45deg, #28a745, #20c997);
+        }
+        .similarity-indicator {
+            font-size: 0.9em;
+            padding: 0.25rem 0.5rem;
+            border-radius: 1rem;
+        }
+        .high-similarity {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .medium-similarity {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .low-similarity {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f1b0b7;
+        }
+
+        /* Expandable details */
         .ticket-summary {
             cursor: pointer;
             transition: all 0.3s ease;
         }
         .ticket-summary:hover {
-            background-color: #f8f9fa;
+            background-color: #e9ecef;
         }
         .ticket-details {
             display: none;
@@ -83,34 +121,14 @@
         .expand-icon.rotated {
             transform: rotate(90deg);
         }
-        .required-columns {
-            background-color: #fff3cd;
-        }
-        .additional-columns {
+        .additional-info {
             background-color: #e7f3ff;
+            border-radius: 0.375rem;
+            padding: 1rem;
         }
-        .column-header {
-            font-weight: bold;
-            color: #495057;
-            background-color: #e9ecef;
-            padding: 0.5rem;
-            border-radius: 0.25rem;
-            margin-bottom: 0.5rem;
-        }
-
-        /* Export button styling */
-        .export-section {
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-            color: white;
-        }
-        .export-btn {
-            background: rgba(255, 255, 255, 0.2);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            color: white;
-        }
-        .export-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-            color: white;
+        .suggested-fix-empty {
+            color: #6c757d;
+            font-style: italic;
         }
     </style>
 </head>
@@ -123,8 +141,9 @@
                     <div class="card">
                         <div class="card-header bg-primary text-white">
                             <h5 class="card-title mb-0">
-                                <i class="fas fa-chart-line me-2"></i>Ticket Similarity Analysis
+                                <i class="fas fa-sync-alt me-2"></i>Open vs Closed Tickets
                             </h5>
+                            <small>Semantic Similarity Analysis</small>
                         </div>
                         <div class="card-body">
                             {% if error %}
@@ -136,75 +155,98 @@
                             
                             {% if file_info %}
                             <div class="alert alert-info" role="alert">
-                                <h6 class="alert-heading">File Info</h6>
-                                <p class="mb-1 small"><strong>Tickets:</strong> {{ file_info.total_tickets }}</p>
-                                <p class="mb-0 small"><strong>Sheet:</strong> {{ file_info.sheet_name }}</p>
+                                <h6 class="alert-heading">Dataset Info</h6>
+                                <div class="row">
+                                    <div class="col-6">
+                                        <p class="mb-1 small"><strong>Open:</strong> {{ file_info.open_tickets_count }}</p>
+                                    </div>
+                                    <div class="col-6">
+                                        <p class="mb-1 small"><strong>Closed:</strong> {{ file_info.closed_tickets_count }}</p>
+                                    </div>
+                                </div>
+                                <p class="mb-0 small"><strong>Assignment Groups:</strong> {{ file_info.assignment_groups|length }}</p>
                             </div>
                             
+                            <!-- Column Status -->
                             <div class="mb-3">
-                                <h6>Required Columns:</h6>
-                                <div class="small">
-                                    {% for col in file_info.required_columns %}
-                                        {% if col in file_info.available_columns %}
-                                            <div><span class="badge bg-success">✓</span> {{ col }}</div>
-                                        {% else %}
-                                            <div><span class="badge bg-danger">✗</span> {{ col }}</div>
-                                        {% endif %}
-                                    {% endfor %}
+                                <h6>Required Columns Status:</h6>
+                                <div class="row">
+                                    <div class="col-6">
+                                        <small class="text-muted">Open Tickets:</small>
+                                        {% for col in file_info.required_columns %}
+                                            {% if col in file_info.open_columns %}
+                                                <div class="small"><span class="badge bg-success">✓</span> {{ col }}</div>
+                                            {% else %}
+                                                <div class="small"><span class="badge bg-danger">✗</span> {{ col }}</div>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </div>
+                                    <div class="col-6">
+                                        <small class="text-muted">Closed Tickets:</small>
+                                        {% for col in file_info.required_columns %}
+                                            {% if col in file_info.closed_columns %}
+                                                <div class="small"><span class="badge bg-success">✓</span> {{ col }}</div>
+                                            {% else %}
+                                                <div class="small"><span class="badge bg-danger">✗</span> {{ col }}</div>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </div>
                                 </div>
                             </div>
                             
-                            {% if 'Short Description' in file_info.available_columns %}
+                            {% if 'Short Description' in file_info.open_columns and 'Assignment group' in file_info.open_columns and 'Short Description' in file_info.closed_columns and 'Assignment group' in file_info.closed_columns %}
                             <form id="analysisForm">
                                 <div class="mb-3">
-                                    <label for="assignment_group" class="form-label"><strong>Assignment Group</strong></label>
+                                    <label for="assignment_group" class="form-label"><strong>Assignment Group Filter</strong></label>
                                     <select class="form-select" id="assignment_group" name="assignment_group">
-                                        <option value="All">All Groups</option>
+                                        <option value="All">All Assignment Groups</option>
                                         {% for group in file_info.assignment_groups %}
-                                        <option value="{{ group }}" 
-                                                {% if group == 'MLX ERP Order to Delivery' %}selected{% endif %}>
-                                            {{ group }}
-                                        </option>
+                                        <option value="{{ group }}">{{ group }}</option>
                                         {% endfor %}
                                     </select>
+                                    <div class="form-text">Filter by open ticket assignment group</div>
                                 </div>
                                 
                                 <div class="mb-3">
                                     <label for="threshold" class="form-label"><strong>Similarity Threshold</strong></label>
                                     <input type="range" class="form-range" id="threshold" name="threshold" 
-                                           min="0.5" max="1.0" step="0.05" value="0.75" 
-                                           oninput="document.getElementById('thresholdValue').textContent = this.value">
+                                           min="0.3" max="0.95" step="0.05" value="0.75" 
+                                           oninput="document.getElementById('thresholdValue').textContent = Math.round(this.value * 100) + '%'">
                                     <div class="d-flex justify-content-between">
-                                        <small>0.5</small>
-                                        <span id="thresholdValue" class="badge bg-primary">0.75</span>
-                                        <small>1.0</small>
+                                        <small>30%</small>
+                                        <span id="thresholdValue" class="badge bg-primary">75%</span>
+                                        <small>95%</small>
                                     </div>
+                                    <div class="form-text">Minimum similarity score for matching</div>
                                 </div>
+                                
                                 <button type="submit" class="btn btn-primary w-100" id="analyzeBtn">
-                                    <i class="fas fa-search me-2"></i>Analyze Similarities
+                                    <i class="fas fa-search me-2"></i>Find Similar Tickets
                                 </button>
+                                
                                 <div class="loading-spinner text-center mt-3">
                                     <div class="spinner-border text-primary" role="status">
                                         <span class="visually-hidden">Loading...</span>
                                     </div>
-                                    <p class="mt-2 small">Analyzing and translating...</p>
+                                    <p class="mt-2 small">Analyzing with TF-IDF + Semantic matching...</p>
                                 </div>
                             </form>
                             
                             <div class="mt-3">
                                 <h6>Features:</h6>
                                 <ul class="small mb-0">
-                                    <li>Assignment group filter</li>
-                                    <li>Auto language detection</li>
-                                    <li>Translation to English</li>
-                                    <li>Drill-down ticket details</li>
-                                    <li>Required vs additional columns</li>
-                                    <li><strong>Excel export</strong></li>
+                                    <li>TF-IDF + Cosine similarity</li>
+                                    <li>Affected CI matching</li>
+                                    <li>Auto language detection & translation</li>
+                                    <li>Semantic understanding with n-grams</li>
+                                    <li>Expandable ticket details</li>
+                                    <li>Suggested fix recommendations</li>
                                 </ul>
                             </div>
                             {% else %}
                             <div class="alert alert-danger">
-                                <strong>Missing Short Description column!</strong>
+                                <strong>Missing required columns!</strong>
+                                <p class="small mb-0">Both datasets need: Short Description, Assignment group</p>
                             </div>
                             {% endif %}
                             {% endif %}
@@ -217,56 +259,35 @@
             <div class="col-lg-8 col-xl-9">
                 <div id="welcomeMessage" class="card">
                     <div class="card-body text-center py-5">
-                        <i class="fas fa-chart-line fa-4x text-muted mb-4"></i>
-                        <h3 class="text-muted">Ticket Similarity Analysis Tool</h3>
-                        <p class="text-muted">Select an assignment group, similarity threshold, and click "Analyze Similarities" to find similar tickets.</p>
+                        <i class="fas fa-sync-alt fa-4x text-muted mb-4"></i>
+                        <h3 class="text-muted">Open vs Closed Ticket Matching</h3>
+                        <p class="text-muted">Find closed tickets that are similar to your open tickets using semantic analysis.</p>
                         <div class="row mt-4">
                             <div class="col-md-3">
-                                <i class="fas fa-filter fa-2x text-primary mb-2"></i>
-                                <h6>Smart Filtering</h6>
-                                <small class="text-muted">Filter by assignment groups</small>
+                                <i class="fas fa-brain fa-2x text-primary mb-2"></i>
+                                <h6>TF-IDF Analysis</h6>
+                                <small class="text-muted">Advanced semantic matching</small>
                             </div>
                             <div class="col-md-3">
                                 <i class="fas fa-language fa-2x text-success mb-2"></i>
-                                <h6>Auto Translation</h6>
-                                <small class="text-muted">Detects and translates content</small>
+                                <h6>Multi-language</h6>
+                                <small class="text-muted">Auto-detects and translates</small>
                             </div>
                             <div class="col-md-3">
-                                <i class="fas fa-search-plus fa-2x text-info mb-2"></i>
-                                <h6>Smart Grouping</h6>
-                                <small class="text-muted">AI-powered similarity detection</small>
+                                <i class="fas fa-cog fa-2x text-info mb-2"></i>
+                                <h6>CI Matching</h6>
+                                <small class="text-muted">Matches Assignment Group</small>
                             </div>
                             <div class="col-md-3">
-                                <i class="fas fa-file-excel fa-2x text-success mb-2"></i>
-                                <h6>Excel Export</h6>
-                                <small class="text-muted">Export results to Excel</small>
+                                <i class="fas fa-list-ul fa-2x text-warning mb-2"></i>
+                                <h6>Smart Suggestions</h6>
+                                <small class="text-muted">AI-powered fix recommendations</small>
                             </div>
                         </div>
                     </div>
                 </div>
                 
                 <div class="results-section">
-                    <!-- Export Section -->
-                    <div class="card export-section mb-3" id="exportSection" style="display: none;">
-                        <div class="card-body">
-                            <div class="row align-items-center">
-                                <div class="col">
-                                    <h6 class="mb-0">
-                                        <i class="fas fa-file-excel me-2"></i>
-                                        Export Results to Excel
-                                    </h6>
-                                    <small>Download formatted Excel file with all analysis results</small>
-                                </div>
-                                <div class="col-auto">
-                                    <button class="btn export-btn" id="exportBtn">
-                                        <i class="fas fa-download me-2"></i>
-                                        Download Excel
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Stats Cards -->
                     <div class="row mb-4" id="statsCards"></div>
                     <!-- Results Container -->
@@ -279,16 +300,14 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
     
     <script>
-        let currentAnalysisData = null;
-
         document.getElementById('analysisForm').addEventListener('submit', function(e) {
             e.preventDefault();
+            
             // Show loading state
             document.getElementById('analyzeBtn').disabled = true;
             document.querySelector('.loading-spinner').style.display = 'block';
             document.getElementById('welcomeMessage').style.display = 'none';
             document.querySelector('.results-section').style.display = 'none';
-            document.getElementById('exportSection').style.display = 'none';
 
             const formData = new FormData(this);
 
@@ -317,12 +336,7 @@
                 document.querySelector('.loading-spinner').style.display = 'none';
 
                 if (data.success) {
-                    currentAnalysisData = data;
                     displayResults(data);
-                    // Show export section if there are results
-                    if (data.total_groups > 0) {
-                        document.getElementById('exportSection').style.display = 'block';
-                    }
                 } else {
                     showError(data.error || 'Unknown error occurred');
                 }
@@ -334,93 +348,9 @@
             });
         });
 
-        // Export functionality
-        document.getElementById('exportBtn').addEventListener('click', function() {
-            if (!currentAnalysisData) {
-                alert('No analysis data available to export. Please run an analysis first.');
-                return;
-            }
-
-            // Show loading state
-            const exportBtn = document.getElementById('exportBtn');
-            const originalText = exportBtn.innerHTML;
-            exportBtn.disabled = true;
-            exportBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Generating Excel...';
-
-            fetch('/export', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify(currentAnalysisData)
-            })
-            .then(response => {
-                if (!response.ok) {
-                    return response.json().then(err => {
-                        throw new Error(err.error || 'Export failed');
-                    });
-                }
-                return response.blob();
-            })
-            .then(blob => {
-                // Create download link
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                
-                // Generate filename
-                const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
-                const assignmentGroup = currentAnalysisData.assignment_group.replace(/ /g, '_');
-                const filename = `Ticket_Similarity_Analysis_${assignmentGroup}_${timestamp}.xlsx`;
-                a.download = filename;
-                
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-
-                // Reset button
-                exportBtn.disabled = false;
-                exportBtn.innerHTML = originalText;
-
-                // Show success message
-                showExportSuccess();
-            })
-            .catch(error => {
-                console.error('Export error:', error);
-                exportBtn.disabled = false;
-                exportBtn.innerHTML = originalText;
-                alert('Export failed: ' + error.message);
-            });
-        });
-
-        function showExportSuccess() {
-            // Create and show a temporary success alert
-            const alertDiv = document.createElement('div');
-            alertDiv.className = 'alert alert-success alert-dismissible fade show position-fixed';
-            alertDiv.style.top = '20px';
-            alertDiv.style.right = '20px';
-            alertDiv.style.zIndex = '9999';
-            alertDiv.innerHTML = `
-                <i class="fas fa-check-circle me-2"></i>
-                <strong>Export Successful!</strong> Your Excel file has been downloaded.
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
-            document.body.appendChild(alertDiv);
-
-            // Auto-remove after 5 seconds
-            setTimeout(() => {
-                if (alertDiv.parentNode) {
-                    alertDiv.parentNode.removeChild(alertDiv);
-                }
-            }, 5000);
-        }
-
-        function toggleTicketDetails(groupIndex, ticketIndex) {
-            const detailsRow = document.getElementById(`details-${groupIndex}-${ticketIndex}`);
-            const icon = document.getElementById(`icon-${groupIndex}-${ticketIndex}`);
+        function toggleTicketDetails(matchIndex, ticketIndex) {
+            const detailsRow = document.getElementById(`details-${matchIndex}-${ticketIndex}`);
+            const icon = document.getElementById(`icon-${matchIndex}-${ticketIndex}`);
             
             if (detailsRow.classList.contains('show')) {
                 detailsRow.classList.remove('show');
@@ -431,41 +361,70 @@
             }
         }
 
+        function getSimilarityClass(score) {
+            if (score >= 0.8) return 'high-similarity';
+            if (score >= 0.6) return 'medium-similarity';
+            return 'low-similarity';
+        }
+
+        function formatDescription(ticket) {
+            let content = ticket['Short Description'] || 'N/A';
+            let originalContent = '';
+            
+            if (ticket['Original Description'] && 
+                ticket['Original Description'] !== ticket['Translated Description'] && 
+                ticket['Original Description'] !== content) {
+                originalContent = `
+                    <div class="original-text">
+                        <span class="badge bg-secondary translation-badge me-1">
+                            ${ticket['Detected Language'] || 'Original'}
+                        </span>
+                        ${ticket['Original Description']}
+                    </div>
+                `;
+            }
+            
+            return `<div>${content}${originalContent}</div>`;
+        }
+
         function displayResults(data) {
             document.querySelector('.results-section').style.display = 'block';
 
             // Stats Cards
-            const filterText = data.assignment_group === 'All' ? 'All Groups' : data.assignment_group;
+            const filterText = data.assignment_group_filter === 'All' ? 'All Assignment Groups' : data.assignment_group_filter;
+            const matchRate = data.filtered_open_tickets > 0 ? 
+                Math.round((data.open_tickets_with_matches / data.filtered_open_tickets) * 100) : 0;
+            
             const statsHtml = `
                 <div class="col-md-3">
                     <div class="card stats-card text-center">
                         <div class="card-body">
-                            <h3>${data.total_groups}</h3>
-                            <p class="mb-0">Groups Found</p>
+                            <h3>${data.open_tickets_with_matches}</h3>
+                            <p class="mb-0">Open Tickets with Matches</p>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="card bg-success text-white text-center">
                         <div class="card-body">
-                            <h3>${Math.round(data.threshold * 100)}%</h3>
-                            <p class="mb-0">Threshold</p>
+                            <h3>${data.total_matches}</h3>
+                            <p class="mb-0">Total Matches Found</p>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="card bg-info text-white text-center">
                         <div class="card-body">
-                            <h3>${data.filtered_tickets}</h3>
-                            <p class="mb-0">Filtered Tickets</p>
+                            <h3>${matchRate}%</h3>
+                            <p class="mb-0">Match Rate</p>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="card bg-warning text-white text-center">
                         <div class="card-body">
-                            <h3>${data.tickets_in_groups}</h3>
-                            <p class="mb-0">In Groups</p>
+                            <h3>${Math.round(data.threshold * 100)}%</h3>
+                            <p class="mb-0">Threshold Used</p>
                         </div>
                     </div>
                 </div>
@@ -474,13 +433,16 @@
 
             let resultsHtml = '';
 
-            if (data.total_groups === 0) {
+            if (data.open_tickets_with_matches === 0) {
                 resultsHtml = `
                     <div class="card">
                         <div class="card-body text-center py-5">
                             <i class="fas fa-search fa-3x text-muted mb-3"></i>
-                            <h3>No Similar Groups Found</h3>
-                            <p class="text-muted">No tickets met the similarity threshold of ${Math.round(data.threshold * 100)}% for "${filterText}". Try lowering the threshold or changing the assignment group.</p>
+                            <h3>No Matches Found</h3>
+                            <p class="text-muted">
+                                No open tickets have similar closed tickets above ${Math.round(data.threshold * 100)}% similarity 
+                                for "${filterText}". Try lowering the threshold or changing the Assignment Group filter.
+                            </p>
                         </div>
                     </div>
                 `;
@@ -495,6 +457,9 @@
                                         <i class="fas fa-filter me-2"></i>
                                         Results for: <strong>${filterText}</strong>
                                     </h6>
+                                    <small class="text-muted">
+                                        Showing ${data.open_tickets_with_matches} open tickets with ${data.total_matches} similar closed tickets
+                                    </small>
                                 </div>
                                 <div class="col-auto">
                                     <small class="text-muted">Click on tickets to see additional details</small>
@@ -504,111 +469,147 @@
                     </div>
                 `;
 
-                data.groups.forEach((group, groupIndex) => {
-                    // Determine badge color based on similarity score
-                    let similarityPerc = group.similarity_score * 100;
-                    let color_class = similarityPerc > 85 ? 'success' :
-                                      similarityPerc > 65 ? 'warning' : 'secondary';
-
+                data.results.forEach((match, matchIndex) => {
+                    const openTicket = match.open_ticket;
+                    const closedTickets = match.similar_closed_tickets;
+                    
                     resultsHtml += `
-                        <div class="card mb-3">
-                            <div class="card-header">
+                        <div class="card mb-4 match-container">
+                            <!-- Open Ticket Header -->
+                            <div class="card-header open-ticket-header">
                                 <div class="row align-items-center">
                                     <div class="col">
                                         <h6 class="mb-0">
-                                            <span class="badge bg-${color_class} me-2">Group ${groupIndex + 1}</span>
-                                            ${group.group_size} Similar Tickets
+                                            <i class="fas fa-ticket-alt me-2"></i>
+                                            Open Ticket: ${openTicket['Number'] || 'N/A'}
                                         </h6>
+                                        <small>Assignment Group: ${openTicket['Assignment group'] || 'N/A'}</small>
                                     </div>
                                     <div class="col-auto">
-                                        <span class="badge bg-${color_class}">
-                                            ${group.similarity_percentage} Similarity
+                                        <span class="badge bg-light text-dark">
+                                            ${match.total_similar_closed} similar closed ticket${match.total_similar_closed > 1 ? 's' : ''}
                                         </span>
                                     </div>
                                 </div>
                             </div>
+                            
+                            <!-- Open Ticket Details -->
+                            <div class="card-body open-ticket-card">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <tbody>
+                                            <tr>
+                                                <td width="150"><strong>Description:</strong></td>
+                                                <td>${formatDescription(openTicket)}</td>
+                                            </tr>
+                                            <tr>
+                                                <td><strong>Assignment Group:</strong></td>
+                                                <td>${openTicket['Assignment group'] || 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td><strong>Assigned To:</strong></td>
+                                                <td>${openTicket['Assigned To'] || 'Unassigned'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td><strong>Customer:</strong></td>
+                                                <td>${openTicket['Customer'] || 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td><strong>Created:</strong></td>
+                                                <td>${openTicket['Created'] || 'N/A'}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            
+                            <!-- Similar Closed Tickets -->
+                            <div class="card-header closed-ticket-header">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-check-circle me-2"></i>
+                                    Similar Closed Tickets (Best Match: ${Math.round(match.best_similarity_score * 100)}%)
+                                </h6>
+                            </div>
+                            
                             <div class="card-body">
                                 <div class="table-responsive">
                                     <table class="table table-hover ticket-table mb-0">
                                         <thead>
                                             <tr>
-                                                <th width="30">
-                                                    <i class="fas fa-expand-alt"></i>
-                                                </th>
-                                                ${data.required_columns.map(col => `<th>${col}</th>`).join('')}
+                                                <th width="30"><i class="fas fa-expand-alt"></i></th>
+                                                <th>Ticket Number</th>
+                                                <th>Description</th>
+                                                <th>Similarity</th>
+                                                <th>Assignment Group</th>
+                                                <th>Resolved By</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                     `;
 
-                    group.tickets.forEach((ticket, ticketIndex) => {
-                        // Summary row with required columns
+                    closedTickets.forEach((closedTicket, ticketIndex) => {
+                        const similarityClass = getSimilarityClass(closedTicket['Similarity Score']);
+                        
+                        // Summary row
                         resultsHtml += `
-                            <tr class="ticket-summary" onclick="toggleTicketDetails(${groupIndex}, ${ticketIndex})">
+                            <tr class="ticket-summary" onclick="toggleTicketDetails(${matchIndex}, ${ticketIndex})">
                                 <td class="text-center">
-                                    <i class="fas fa-chevron-right expand-icon" id="icon-${groupIndex}-${ticketIndex}"></i>
+                                    <i class="fas fa-chevron-right expand-icon" id="icon-${matchIndex}-${ticketIndex}"></i>
                                 </td>
+                                <td>${closedTicket['Number'] || 'N/A'}</td>
+                                <td>${formatDescription(closedTicket)}</td>
+                                <td>
+                                    <span class="similarity-indicator ${similarityClass}">
+                                        ${closedTicket['Similarity Percentage']}
+                                    </span>
+                                </td>
+                                <td>${closedTicket['Assignment group'] || 'N/A'}</td>
+                                <td>${closedTicket['Resolved by'] || 'N/A'}</td>
+                            </tr>
                         `;
 
-                        data.required_columns.forEach(col => {
-                            if (col === 'Short Description') {
-                                let content = ticket[col] || 'N/A';
-                                let originalContent = '';
-                                
-                                if (ticket[col] !== ticket['Original Description'] && ticket['Original Description']) {
-                                    originalContent = `
-                                        <div class="original-text mt-1">
-                                            <span class="badge bg-secondary translation-badge me-1">Original</span>
-                                            ${ticket['Original Description']}
-                                        </div>
-                                    `;
-                                }
-                                resultsHtml += `<td><div>${content}${originalContent}</div></td>`;
-                            } else {
-                                resultsHtml += `<td>${ticket[col] || 'N/A'}</td>`;
+                        // Details row with additional information
+                        const additionalColumns = data.closed_columns.filter(col => 
+                            !['Number', 'Short Description', 'Assignment group', 'Resolved by', 
+                              'Original Description', 'Translated Description', 'Detected Language',
+                              'Similarity Score', 'Similarity Percentage'].includes(col)
+                        );
+
+                        resultsHtml += `
+                            <tr class="ticket-details" id="details-${matchIndex}-${ticketIndex}">
+                                <td></td>
+                                <td colspan="5">
+                                    <div class="additional-info">
+                                        <div class="row">
+                                            <!-- Core ticket details -->
+                                            <div class="col-md-6 mb-2">
+                                                <strong class="text-primary">Assigned To:</strong><br>
+                                                <span class="text-muted">${closedTicket['Assigned To'] || 'N/A'}</span>
+                                            </div>
+                                            <div class="col-md-6 mb-2">
+                                                <strong class="text-primary">Closing Note:</strong><br>
+                                                <span class="text-muted">${closedTicket['Closing note'] || 'N/A'}</span>
+                                            </div>
+                        `;
+
+                        // Add other additional columns
+                        additionalColumns.forEach((col, colIndex) => {
+                            if (!['Assigned To', 'Closing note'].includes(col)) {
+                                resultsHtml += `
+                                    <div class="col-md-6 mb-2">
+                                        <strong class="text-primary">${col}:</strong><br>
+                                        <span class="text-muted">${closedTicket[col] || 'N/A'}</span>
+                                    </div>
+                                `;
                             }
                         });
 
-                        resultsHtml += `</tr>`;
-
-                        // Details row with all additional columns
-                        const additionalColumns = data.all_columns.filter(col => 
-                            !data.required_columns.includes(col) && 
-                            col !== 'Original Description' && 
-                            col !== 'Translated Description'
-                        );
-
-                        if (additionalColumns.length > 0) {
-                            resultsHtml += `
-                                <tr class="ticket-details" id="details-${groupIndex}-${ticketIndex}">
-                                    <td></td>
-                                    <td colspan="${data.required_columns.length}">
-                                        <div class="additional-columns p-3">
-                                            <div class="column-header">
-                                                <i class="fas fa-info-circle me-2"></i>Additional Details
-                                            </div>
-                                            <div class="row">
-                            `;
-
-                            additionalColumns.forEach((col, colIndex) => {
-                                if (colIndex % 2 === 0 && colIndex > 0) {
-                                    resultsHtml += `</div><div class="row">`;
-                                }
-                                resultsHtml += `
-                                    <div class="col-md-6 mb-2">
-                                        <strong>${col}:</strong><br>
-                                        <span class="text-muted">${ticket[col] || 'N/A'}</span>
-                                    </div>
-                                `;
-                            });
-
-                            resultsHtml += `
-                                            </div>
+                        resultsHtml += `
                                         </div>
-                                    </td>
-                                </tr>
-                            `;
-                        }
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
                     });
 
                     resultsHtml += `
