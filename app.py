@@ -21,9 +21,9 @@ OPEN_TICKETS_PATH = r"C:\Users\RitabrataRoyChoudhur\OneDrive - GyanSys Inc\Deskt
 CLOSED_TICKETS_PATH = r"C:\Users\RitabrataRoyChoudhur\OneDrive - GyanSys Inc\Desktop\Python\ServiceNow\close.xlsx"
 DEFAULT_THRESHOLD = 0.75
 
-# Updated required columns to include 'Assigned To' and 'Closing note'
+# Updated required columns to include 'Assigned To' and 'Close Notes'
 REQUIRED_COLUMNS = ['Number', 'Short Description', 'Assignment group', 'Customer', 'Created', 'Assigned to']
-PREFERRED_COLUMNS = REQUIRED_COLUMNS + ['Closing note', 'Resolved by']
+PREFERRED_COLUMNS = REQUIRED_COLUMNS + ['Close Notes', 'Resolved by']
 
 def clean_value(value):
     if pd.isna(value):
@@ -49,21 +49,21 @@ def preprocess_text(text):
 
 def generate_suggested_fix(similar_closed_tickets):
     """
-    Generate suggested fix for open ticket based on closing notes from similar closed tickets
+    Generate suggested fix for open ticket based on Close Notess from similar closed tickets
     """
     closing_notes = []
     
     for ticket in similar_closed_tickets:
-        closing_note = ticket.get('Closing note', '').strip()
+        closing_note = ticket.get('Close Notes', '').strip()
         if closing_note and closing_note.lower() not in ['n/a', 'na', '']:
             closing_notes.append(f"• {closing_note}")
     
     if closing_notes:
-        # Concatenate all closing notes
+        # Concatenate all Close Notess
         suggested_fix = "Based on similar resolved tickets:\n\n" + "\n".join(closing_notes)
         return suggested_fix
     else:
-        return "No closing notes available from similar tickets"
+        return "No Close Notess available from similar tickets"
 
 def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment_group_filter=None, threshold=0.75):
     """
@@ -261,7 +261,7 @@ def create_excel_export(results, analysis_params):
         "Match #", "Open Ticket Number", "Open Description", "Open Assignment Group", 
         "Open Customer", "Open Created", "Open Assigned To", "Closed Ticket Number", 
         "Closed Description", "Closed Assignment Group", "Closed Resolved By", 
-        "Closed Assigned To", "Closing Note", "Similarity Score", "Similarity %"
+        "Closed Assigned To", "Close Notes", "Similarity Score", "Similarity %"
     ]
     
     detailed_data.append(headers)
@@ -284,7 +284,7 @@ def create_excel_export(results, analysis_params):
                 closed_ticket.get('Assignment group', ''),
                 closed_ticket.get('Resolved by', ''),
                 closed_ticket.get('Assigned to', ''),
-                closed_ticket.get('Closing note', ''),
+                closed_ticket.get('Close Notes', ''),
                 closed_ticket.get('Similarity Score', ''),
                 closed_ticket.get('Similarity Percentage', '')
             ]
@@ -385,7 +385,7 @@ def index():
             'missing_open_preferred': open_validation['missing_preferred'],
             'missing_closed_preferred': closed_validation['missing_preferred'],
             'assignment_groups': assignment_groups,
-            'has_closing_note': 'Closing note' in closed_df.columns,
+            'has_closing_note': 'Close Notes' in closed_df.columns,
             'has_resolved_by': 'Resolved by' in closed_df.columns
         }
         
@@ -459,7 +459,7 @@ def analyze():
             'preferred_columns': PREFERRED_COLUMNS,
             'open_columns': open_df.columns.tolist(),
             'closed_columns': closed_df.columns.tolist(),
-            'has_closing_note': 'Closing note' in closed_df.columns,
+            'has_closing_note': 'Close Notes' in closed_df.columns,
             'has_resolved_by': 'Resolved by' in closed_df.columns
         }
         
