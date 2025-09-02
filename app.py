@@ -1,14 +1,16 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_file
 import pandas as pd
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import os
 import re
-import asyncio
-from googletrans import Translator
 from datetime import datetime
 import warnings
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 warnings.filterwarnings('ignore')
 
@@ -23,50 +25,10 @@ DEFAULT_THRESHOLD = 0.75
 REQUIRED_COLUMNS = ['Number', 'Short Description', 'Assignment group', 'Customer', 'Created', 'Assigned to']
 PREFERRED_COLUMNS = REQUIRED_COLUMNS + ['Closing note', 'Resolved by']
 
-translator = Translator()
-
 def clean_value(value):
     if pd.isna(value):
         return ""
     return str(value).strip()
-
-def translate_to_english(descriptions):
-    translations = []
-    for desc in descriptions:
-        if pd.isna(desc) or str(desc).strip() == "":
-            translations.append({
-                "original": "",
-                "detected_lang": "en",
-                "english": ""
-            })
-            continue
-        desc_str = str(desc).strip()
-        try:
-            # Detect language (synchronous)
-            detection = translator.detect(desc_str)
-            if detection.lang != 'en' and detection.confidence > 0.7:
-                # Translate to English (synchronous)
-                translated = translator.translate(desc_str, dest="en")
-                translations.append({
-                    "original": desc_str,
-                    "detected_lang": detection.lang,
-                    "english": translated.text
-                })
-                print(f"{desc_str} -> {translated.text} (from {detection.lang})")
-            else:
-                translations.append({
-                    "original": desc_str,
-                    "detected_lang": detection.lang,
-                    "english": desc_str
-                })
-        except Exception as e:
-            print(f"Translation error for '{desc_str}': {str(e)}")
-            translations.append({
-                "original": desc_str,
-                "detected_lang": "unknown",
-                "english": desc_str
-            })
-    return translations
 
 def preprocess_text(text):
     """Enhanced text preprocessing"""
@@ -131,21 +93,9 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
     print(f"Open tickets count: {len(open_df)}")
     print(f"Closed tickets count: {len(closed_df)}")
     
-    # Translate descriptions to English
-    print("Translating open ticket descriptions...")
-    open_translations = translate_to_english(open_df['Short Description'].tolist())
-    
-    print("Translating closed ticket descriptions...")
-    closed_translations = translate_to_english(closed_df['Short Description'].tolist())
-    
-    # Debug translation output
-    for i, item in enumerate(open_translations[:5]):  # Show first 5 for debugging
-        if item['original'] != item['english']:
-            print(f"Open {i}: {item['original']} -> {item['english']} (from {item['detected_lang']})")
-    
-    # Preprocess texts
-    open_texts = [preprocess_text(trans['english']) for trans in open_translations]
-    closed_texts = [preprocess_text(trans['english']) for trans in closed_translations]
+    # Preprocess texts (no translation needed)
+    open_texts = [preprocess_text(desc) for desc in open_df['Short Description'].tolist()]
+    closed_texts = [preprocess_text(desc) for desc in closed_df['Short Description'].tolist()]
     
     # Combine all texts for TF-IDF fitting
     all_texts = open_texts + closed_texts
@@ -196,10 +146,6 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
                 for col in closed_df.columns:
                     closed_ticket_data[col] = clean_value(closed_ticket_row[col])
                 
-                # Add translation info
-                closed_ticket_data['Translated Description'] = closed_translations[j]['english']
-                closed_ticket_data['Original Description'] = closed_translations[j]['original']
-                closed_ticket_data['Detected Language'] = closed_translations[j]['detected_lang']
                 closed_ticket_data['Similarity Score'] = round(similarity_score, 3)
                 closed_ticket_data['Similarity Percentage'] = f"{similarity_score * 100:.1f}%"
                 
@@ -213,11 +159,6 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
             open_ticket_data = {}
             for col in open_df.columns:
                 open_ticket_data[col] = clean_value(open_ticket_row[col])
-            
-            # Add translation info for open ticket
-            open_ticket_data['Translated Description'] = open_translations[i]['english']
-            open_ticket_data['Original Description'] = open_translations[i]['original']
-            open_ticket_data['Detected Language'] = open_translations[i]['detected_lang']
             
             # Generate suggested fix based on all similar closed tickets
             suggested_fix = generate_suggested_fix(similar_closed)
@@ -255,6 +196,161 @@ def validate_columns(df, dataset_name):
         'missing_preferred': missing_preferred,
         'has_all_required': len(missing_required) == 0
     }
+
+def create_excel_export(results, analysis_params):
+    """
+    Create Excel file with analysis results
+    """
+    wb = Workbook()
+    
+    # Remove default worksheet
+    wb.remove(wb.active)
+    
+    # Create Summary sheet
+    summary_ws = wb.create_sheet("Summary")
+    
+    # Define styles
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    open_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+    closed_fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+    
+    border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Summary data
+    summary_data = [
+        ["Analysis Summary", ""],
+        ["Assignment Group Filter", analysis_params.get('assignment_group_filter', 'All')],
+        ["Similarity Threshold", analysis_params.get('threshold_percentage', 'N/A')],
+        ["Total Open Tickets Analyzed", analysis_params.get('filtered_open_tickets', 0)],
+        ["Open Tickets with Matches", analysis_params.get('open_tickets_with_matches', 0)],
+        ["Total Similar Closed Tickets Found", analysis_params.get('total_matches', 0)],
+        ["Analysis Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+    ]
+    
+    # Write summary
+    for row_idx, (key, value) in enumerate(summary_data, 1):
+        cell_key = summary_ws.cell(row=row_idx, column=1, value=key)
+        cell_value = summary_ws.cell(row=row_idx, column=2, value=value)
+        
+        if row_idx == 1:  # Header row
+            cell_key.font = header_font
+            cell_key.fill = header_fill
+            cell_value.font = header_font
+            cell_value.fill = header_fill
+        
+        cell_key.border = border
+        cell_value.border = border
+    
+    summary_ws.column_dimensions['A'].width = 30
+    summary_ws.column_dimensions['B'].width = 40
+    
+    # Create Detailed Results sheet
+    details_ws = wb.create_sheet("Detailed Results")
+    
+    # Prepare detailed data
+    detailed_data = []
+    
+    # Headers
+    headers = [
+        "Match #", "Open Ticket Number", "Open Description", "Open Assignment Group", 
+        "Open Customer", "Open Created", "Open Assigned To", "Closed Ticket Number", 
+        "Closed Description", "Closed Assignment Group", "Closed Resolved By", 
+        "Closed Assigned To", "Closing Note", "Similarity Score", "Similarity %"
+    ]
+    
+    detailed_data.append(headers)
+    
+    # Data rows
+    for match_idx, match in enumerate(results, 1):
+        open_ticket = match['open_ticket']
+        
+        for closed_ticket in match['similar_closed_tickets']:
+            row = [
+                match_idx,
+                open_ticket.get('Number', ''),
+                open_ticket.get('Short Description', ''),
+                open_ticket.get('Assignment group', ''),
+                open_ticket.get('Customer', ''),
+                open_ticket.get('Created', ''),
+                open_ticket.get('Assigned to', ''),
+                closed_ticket.get('Number', ''),
+                closed_ticket.get('Short Description', ''),
+                closed_ticket.get('Assignment group', ''),
+                closed_ticket.get('Resolved by', ''),
+                closed_ticket.get('Assigned to', ''),
+                closed_ticket.get('Closing note', ''),
+                closed_ticket.get('Similarity Score', ''),
+                closed_ticket.get('Similarity Percentage', '')
+            ]
+            detailed_data.append(row)
+    
+    # Write detailed data
+    for row_idx, row_data in enumerate(detailed_data, 1):
+        for col_idx, value in enumerate(row_data, 1):
+            cell = details_ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.border = border
+            
+            if row_idx == 1:  # Header row
+                cell.font = header_font
+                cell.fill = header_fill
+            elif col_idx <= 7:  # Open ticket columns
+                cell.fill = open_fill
+            else:  # Closed ticket columns
+                cell.fill = closed_fill
+    
+    # Adjust column widths
+    for col in details_ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)  # Cap at 50 characters
+        details_ws.column_dimensions[column].width = adjusted_width
+    
+    # Create Suggested Fixes sheet
+    fixes_ws = wb.create_sheet("Suggested Fixes")
+    
+    fixes_data = [["Open Ticket Number", "Suggested Fix"]]
+    
+    for match in results:
+        open_ticket = match['open_ticket']
+        suggested_fix = match['suggested_fix']
+        
+        fixes_data.append([
+            open_ticket.get('Number', ''),
+            suggested_fix
+        ])
+    
+    # Write fixes data
+    for row_idx, row_data in enumerate(fixes_data, 1):
+        for col_idx, value in enumerate(row_data, 1):
+            cell = fixes_ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.border = border
+            cell.alignment = Alignment(wrap_text=True, vertical='top')
+            
+            if row_idx == 1:  # Header row
+                cell.font = header_font
+                cell.fill = header_fill
+    
+    fixes_ws.column_dimensions['A'].width = 20
+    fixes_ws.column_dimensions['B'].width = 80
+    
+    # Save to BytesIO
+    excel_buffer = io.BytesIO()
+    wb.save(excel_buffer)
+    excel_buffer.seek(0)
+    
+    return excel_buffer
 
 @app.route('/')
 def index():
@@ -371,6 +467,36 @@ def analyze():
         
     except Exception as e:
         print(f"Analysis error: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/export_excel', methods=['POST'])
+def export_excel():
+    try:
+        # Get the analysis results from the request
+        data = request.get_json()
+        
+        if not data or 'results' not in data:
+            return jsonify({'success': False, 'error': 'No analysis results to export'}), 400
+        
+        results = data['results']
+        analysis_params = data.get('analysis_params', {})
+        
+        # Create Excel file
+        excel_buffer = create_excel_export(results, analysis_params)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"ticket_similarity_analysis_{timestamp}.xlsx"
+        
+        return send_file(
+            excel_buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        
+    except Exception as e:
+        print(f"Export error: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
