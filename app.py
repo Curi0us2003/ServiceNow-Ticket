@@ -8,11 +8,19 @@ import re
 from datetime import datetime
 import warnings
 import io
+import logging
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
+# LLM imports
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import ChatPromptTemplate
+
 warnings.filterwarnings('ignore')
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
 
@@ -24,6 +32,35 @@ DEFAULT_THRESHOLD = 0.75
 # Updated required columns to include 'Assigned To' and 'Close Notes'
 REQUIRED_COLUMNS = ['Number', 'Short Description', 'Assignment group', 'Customer', 'Created', 'Assigned to']
 PREFERRED_COLUMNS = REQUIRED_COLUMNS + ['Close Notes', 'Resolved by']
+
+# Initialize the LLM globally
+try:
+    llm = ChatOllama(model="mistral")
+    logging.info("LLM initialized successfully with model: llama3")
+except Exception as e:
+    logging.error(f"Failed to initialize LLM: {str(e)}")
+    llm = None
+
+# Template for generating suggested fixes
+suggestion_template = """You are an IT support expert analyzing closed support tickets to provide actionable solutions for similar open tickets.
+
+        Based on the following closing notes from similar resolved tickets, provide a comprehensive and actionable suggested fix:
+
+        Closing Notes from Similar Tickets:
+        {closing_notes}
+
+        Open Ticket Description:
+        {open_ticket_description}
+
+        Please provide:
+        1. A clear, step-by-step solution based on the patterns you see in the closing notes
+        2. Common root causes identified from the similar tickets
+        3. Any preventive measures if applicable
+        4. If the closing notes are too generic or unhelpful, provide general troubleshooting steps for this type of issue
+
+        Format your response in a clear, professional manner that a support technician can easily follow.
+
+        Suggested Fix:"""
 
 def clean_value(value):
     if pd.isna(value):
@@ -47,23 +84,75 @@ def preprocess_text(text):
     
     return ' '.join(words).strip()
 
-def generate_suggested_fix(similar_closed_tickets):
+def generate_suggested_fix(similar_closed_tickets, open_ticket_description=""):
     """
-    Generate suggested fix for open ticket based on Close Notess from similar closed tickets
+    Generate suggested fix for open ticket based on Close Notes from similar closed tickets
+    Enhanced with LLM for better, more coherent suggestions
     """
-    closing_notes = []
+    global llm
     
-    for ticket in similar_closed_tickets:
-        closing_note = ticket.get('Close Notes', '').strip()
-        if closing_note and closing_note.lower() not in ['n/a', 'na', '']:
-            closing_notes.append(f"• {closing_note}")
-    
-    if closing_notes:
-        # Concatenate all Close Notess
-        suggested_fix = "Based on similar resolved tickets:\n\n" + "\n".join(closing_notes)
-        return suggested_fix
-    else:
-        return "No Close Notess available from similar tickets"
+    try:
+        closing_notes = []
+        
+        # Extract closing notes from similar tickets
+        for ticket in similar_closed_tickets:
+            closing_note = ticket.get('Close Notes', '').strip()
+            if closing_note and closing_note.lower() not in ['n/a', 'na', '', 'none', 'null', 'not applicable']:
+                closing_notes.append(f"• {closing_note}")
+        
+        # If no meaningful closing notes found
+        if not closing_notes:
+            return "No meaningful closing notes available from similar tickets. Please investigate manually or contact the appropriate support team."
+        
+        # If only one closing note or LLM is not available, return basic format
+        if len(closing_notes) == 1 or llm is None:
+            basic_fix = "Based on similar resolved ticket(s):\n\n" + "\n".join(closing_notes)
+            if llm is None:
+                basic_fix += "\n\n(Note: AI enhancement unavailable - LLM not initialized)"
+            return basic_fix
+        
+        # Use LLM to generate enhanced suggestion when multiple closing notes exist
+        closing_notes_text = "\n".join(closing_notes)
+        
+        # Create prompt template
+        prompt = ChatPromptTemplate.from_template(suggestion_template)
+        
+        # Create chain
+        chain = prompt | llm
+        
+        logging.info(f"Generating AI-enhanced suggestion for ticket with {len(closing_notes)} similar closing notes")
+        
+        # Generate enhanced suggestion
+        response = chain.invoke({
+            "closing_notes": closing_notes_text,
+            "open_ticket_description": open_ticket_description
+        })
+        
+        # Extract and clean the response
+        suggested_fix = response.content.strip()
+        
+        # Add header to indicate LLM enhancement
+        enhanced_fix = f"AI-Enhanced Suggested Fix (based on {len(closing_notes)} similar tickets):\n\n{suggested_fix}"
+        
+        logging.info("AI-enhanced suggestion generated successfully")
+        return enhanced_fix
+        
+    except Exception as e:
+        logging.error(f"Error generating LLM-enhanced suggestion: {str(e)}")
+        
+        # Fallback to original method if LLM fails
+        closing_notes = []
+        for ticket in similar_closed_tickets:
+            closing_note = ticket.get('Close Notes', '').strip()
+            if closing_note and closing_note.lower() not in ['n/a', 'na', '']:
+                closing_notes.append(f"• {closing_note}")
+        
+        if closing_notes:
+            fallback_fix = "Based on similar resolved tickets:\n\n" + "\n".join(closing_notes)
+            fallback_fix += f"\n\n(Note: AI enhancement failed - showing original closing notes. Error: {str(e)})"
+            return fallback_fix
+        else:
+            return "No closing notes available from similar tickets"
 
 def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment_group_filter=None, threshold=0.75):
     """
@@ -160,8 +249,9 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
             for col in open_df.columns:
                 open_ticket_data[col] = clean_value(open_ticket_row[col])
             
-            # Generate suggested fix based on all similar closed tickets
-            suggested_fix = generate_suggested_fix(similar_closed)
+            # Generate suggested fix with LLM enhancement - pass open ticket description
+            open_description = clean_value(open_ticket_row.get('Short Description', ''))
+            suggested_fix = generate_suggested_fix(similar_closed, open_description)
             
             results.append({
                 'open_ticket': open_ticket_data,
@@ -230,6 +320,7 @@ def create_excel_export(results, analysis_params):
         ["Total Open Tickets Analyzed", analysis_params.get('filtered_open_tickets', 0)],
         ["Open Tickets with Matches", analysis_params.get('open_tickets_with_matches', 0)],
         ["Total Similar Closed Tickets Found", analysis_params.get('total_matches', 0)],
+        ["LLM Status", "Available" if llm is not None else "Unavailable"],
         ["Analysis Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
     ]
     
@@ -386,7 +477,9 @@ def index():
             'missing_closed_preferred': closed_validation['missing_preferred'],
             'assignment_groups': assignment_groups,
             'has_closing_note': 'Close Notes' in closed_df.columns,
-            'has_resolved_by': 'Resolved by' in closed_df.columns
+            'has_resolved_by': 'Resolved by' in closed_df.columns,
+            'llm_available': llm is not None,
+            'llm_model': 'llama3' if llm is not None else 'None'
         }
         
         # Check if we have minimum required columns for analysis
@@ -460,7 +553,9 @@ def analyze():
             'open_columns': open_df.columns.tolist(),
             'closed_columns': closed_df.columns.tolist(),
             'has_closing_note': 'Close Notes' in closed_df.columns,
-            'has_resolved_by': 'Resolved by' in closed_df.columns
+            'has_resolved_by': 'Resolved by' in closed_df.columns,
+            'llm_available': llm is not None,
+            'ai_enhanced_count': sum(1 for r in results if 'AI-Enhanced' in r.get('suggested_fix', ''))
         }
         
         return jsonify(response)
@@ -468,6 +563,72 @@ def analyze():
     except Exception as e:
         print(f"Analysis error: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/llm_status')
+def llm_status():
+    """
+    Check if LLM is available and working
+    """
+    global llm
+    
+    if llm is None:
+        return jsonify({
+            'available': False,
+            'error': 'LLM not initialized',
+            'model': None
+        })
+    
+    try:
+        # Test the LLM with a simple message
+        test_response = llm.invoke("Test connection")
+        return jsonify({
+            'available': True,
+            'status': 'Working',
+            'model': 'llama3',
+            'test_response_length': len(test_response.content) if hasattr(test_response, 'content') else 0
+        })
+    except Exception as e:
+        logging.error(f"LLM test failed: {str(e)}")
+        return jsonify({
+            'available': False,
+            'error': str(e),
+            'model': 'llama3'
+        })
+
+@app.route('/configure_llm', methods=['POST'])
+def configure_llm():
+    """
+    Endpoint to configure LLM settings
+    """
+    global llm
+    
+    try:
+        data = request.get_json()
+        model_name = data.get('model', 'llama3')
+        base_url = data.get('base_url')
+        
+        if base_url:
+            llm = ChatOllama(model=model_name, base_url=base_url)
+        else:
+            llm = ChatOllama(model=model_name)
+        
+        # Test the LLM
+        test_response = llm.invoke("Test message")
+        logging.info(f"LLM reconfigured successfully with model: {model_name}")
+        
+        return jsonify({
+            'success': True, 
+            'message': f'LLM configured successfully with model: {model_name}',
+            'model': model_name,
+            'base_url': base_url
+        })
+        
+    except Exception as e:
+        logging.error(f"Failed to configure LLM: {str(e)}")
+        return jsonify({
+            'success': False, 
+            'error': f'Failed to configure LLM: {str(e)}'
+        }), 500
 
 @app.route('/export_excel', methods=['POST'])
 def export_excel():
@@ -500,4 +661,10 @@ def export_excel():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
+    # Print LLM status on startup
+    if llm is not None:
+        print("✅ LLM initialized successfully - AI-enhanced suggestions available")
+    else:
+        print("⚠️ LLM not available - will use basic suggestion format")
+    
     app.run(debug=True)
