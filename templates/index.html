@@ -139,12 +139,33 @@
             background-color: #f8f9fa;
             border-left: 3px solid #28a745;
         }
+        
+        /* New styles for root cause and suggested fix sections */
+        .root-cause-box {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 1rem;
+            margin-top: 1rem;
+            border-radius: 0.375rem;
+        }
         .suggested-fix-box {
             background-color: #e7f3ff;
             border-left: 4px solid #0dcaf0;
             padding: 1rem;
             margin-top: 1rem;
             border-radius: 0.375rem;
+        }
+        .analysis-section {
+            margin: 1.5rem 0;
+            padding: 0 0.5rem;
+        }
+        .analysis-icon {
+            margin-right: 0.5rem;
+        }
+        .analysis-content {
+            font-size: 0.95em;
+            line-height: 1.5;
+            white-space: pre-wrap;
         }
     </style>
 </head>
@@ -162,63 +183,47 @@
                             <small>Semantic Similarity Analysis</small>
                         </div>
                         <div class="card-body">
-                            {% if error %}
-                            <div class="alert alert-danger" role="alert">
+                            <!-- Error Display -->
+                            <div id="errorDisplay" style="display: none;" class="alert alert-danger" role="alert">
                                 <h6 class="alert-heading">Error!</h6>
-                                <p class="mb-0 small">{{ error }}</p>
+                                <p class="mb-0 small" id="errorMessage"></p>
                             </div>
-                            {% endif %}
 
-                            {% if file_info %}
-                            <div class="alert alert-info" role="alert">
+                            <!-- Dataset Info -->
+                            <div id="datasetInfo" style="display: none;" class="alert alert-info" role="alert">
                                 <h6 class="alert-heading">Dataset Info</h6>
                                 <div class="row">
                                     <div class="col-6">
-                                        <p class="mb-1 small"><strong>Open:</strong> {{ file_info.open_tickets_count }}</p>
+                                        <p class="mb-1 small"><strong>Open:</strong> <span id="openCount"></span></p>
                                     </div>
                                     <div class="col-6">
-                                        <p class="mb-1 small"><strong>Closed:</strong> {{ file_info.closed_tickets_count }}</p>
+                                        <p class="mb-1 small"><strong>Closed:</strong> <span id="closedCount"></span></p>
                                     </div>
                                 </div>
-                                <p class="mb-0 small"><strong>Assignment Groups:</strong> {{ file_info.assignment_groups|length }}</p>
+                                <p class="mb-0 small"><strong>Assignment Groups:</strong> <span id="groupCount"></span></p>
                             </div>
 
                             <!-- Column Status -->
-                            <div class="mb-3">
+                            <div id="columnStatus" style="display: none;" class="mb-3">
                                 <h6>Required Columns Status:</h6>
                                 <div class="row">
                                     <div class="col-6">
                                         <small class="text-muted">Open Tickets:</small>
-                                        {% for col in file_info.required_columns %}
-                                            {% if col in file_info.open_columns %}
-                                                <div class="small"><span class="badge bg-success">✓</span> {{ col }}</div>
-                                            {% else %}
-                                                <div class="small"><span class="badge bg-danger">✗</span> {{ col }}</div>
-                                            {% endif %}
-                                        {% endfor %}
+                                        <div id="openColumns"></div>
                                     </div>
                                     <div class="col-6">
                                         <small class="text-muted">Closed Tickets:</small>
-                                        {% for col in file_info.required_columns %}
-                                            {% if col in file_info.closed_columns %}
-                                                <div class="small"><span class="badge bg-success">✓</span> {{ col }}</div>
-                                            {% else %}
-                                                <div class="small"><span class="badge bg-danger">✗</span> {{ col }}</div>
-                                            {% endif %}
-                                        {% endfor %}
+                                        <div id="closedColumns"></div>
                                     </div>
                                 </div>
                             </div>
 
-                            {% if 'Short Description' in file_info.open_columns and 'Assignment group' in file_info.open_columns and 'Short Description' in file_info.closed_columns and 'Assignment group' in file_info.closed_columns %}
+                            <!-- Analysis Form -->
                             <form id="analysisForm">
                                 <div class="mb-3">
                                     <label for="assignment_group" class="form-label"><strong>Assignment Group Filter</strong></label>
                                     <select class="form-select" id="assignment_group" name="assignment_group">
                                         <option value="All">All Assignment Groups</option>
-                                        {% for group in file_info.assignment_groups %}
-                                        <option value="{{ group }}">{{ group }}</option>
-                                        {% endfor %}
                                     </select>
                                     <div class="form-text">Filter by open ticket assignment group</div>
                                 </div>
@@ -249,28 +254,12 @@
                             </form>
 
                             <div class="mt-3">
-                                <!-- <h6>Features:</h6>
-                                <ul class="small mb-0">
-                                    <li>TF-IDF + Cosine similarity</li>
-                                    <li>Assignment group matching</li>
-                                    <li>Semantic understanding with n-grams</li>
-                                    <li>Expandable ticket details</li>
-                                    <li>Suggested fix recommendations</li>
-                                    <li>Export results to Excel</li>
-                                </ul> -->
-                                 <div class="export-section text-center" id="exportSection">
+                                <div class="export-section text-center" id="exportSection">
                                     <button class="btn btn-outline-success me-2" onclick="exportToExcel()">
-                                    <i class="fas fa-file-excel me-1"></i> Export to Excel
+                                        <i class="fas fa-file-excel me-1"></i> Export to Excel
                                     </button>
                                 </div>
                             </div>
-                            {% else %}
-                            <div class="alert alert-danger">
-                                <strong>Missing required columns!</strong>
-                                <p class="small mb-0">Both datasets need: Short Description, Assignment group</p>
-                            </div>
-                            {% endif %}
-                            {% endif %}
                         </div>
                     </div>
                 </div>
@@ -301,19 +290,18 @@
                             </div>
                             <div class="col-md-3">
                                 <i class="fas fa-lightbulb fa-2x text-warning mb-2"></i>
-                                <h6>Smart Suggestions</h6>
-                                <small class="text-muted">AI-powered fix recommendations</small>
+                                <h6>Smart Analysis</h6>
+                                <small class="text-muted">AI-powered root cause & fixes</small>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                 <div class="results-section">
+                <div class="results-section">
                     <!-- Stats Cards -->
                     <div class="row mb-4" id="statsCards"></div>
                     <!-- Results Container -->
                     <div id="resultsContainer"></div>
-                    <!-- Export Section -->
                 </div>
             </div>
         </div>
@@ -324,6 +312,17 @@
     <script>
         let currentResults = null;
         let currentAnalysisParams = {};
+        
+        // Initialize page on load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadInitialData();
+        });
+
+        function loadInitialData() {
+            // Simulate loading file info (in real implementation, this would come from the server)
+            // For demo purposes, showing the form directly
+            document.getElementById('analysisForm').style.display = 'block';
+        }
 
         document.getElementById('analysisForm').addEventListener('submit', function(e) {
             e.preventDefault();
@@ -450,6 +449,8 @@
                 data.results.forEach((match, matchIndex) => {
                     const openTicket = match.open_ticket;
                     const similarTickets = match.similar_closed_tickets;
+                    const rootCause = match.root_cause || 'No root cause analysis available';
+                    const suggestedFix = match.suggested_fix || 'No suggested fix available';
                     
                     resultsHtml += `
                         <div class="card mb-4">
@@ -461,33 +462,41 @@
                                 </h6>
                             </div>
                             <div class="card-body">
-                                <div class="row">
-                                    <div class="col-md-8">
-                                        <h6><strong>Description:</strong></h6>
-                                        <p class="mb-2">${formatValue(openTicket['Short Description'])}</p>
-                                        
-                                        <div class="row">
-                                            <div class="col-sm-6">
-                                                <strong>Assignment Group:</strong> ${formatValue(openTicket['Assignment group'])}
-                                            </div>
-                                            <div class="col-sm-6">
-                                                <strong>Customer:</strong> ${formatValue(openTicket.Customer)}
-                                            </div>
+                                <!-- Open Ticket Details -->
+                                <div class="mb-3">
+                                    <h6><strong>Description:</strong></h6>
+                                    <p class="mb-2">${formatValue(openTicket['Short Description'])}</p>
+                                    
+                                    <div class="row">
+                                        <div class="col-sm-6">
+                                            <strong>Assignment Group:</strong> ${formatValue(openTicket['Assignment group'])}
                                         </div>
-                                        <div class="row mt-2">
-                                            <div class="col-sm-6">
-                                                <strong>Created:</strong> ${formatValue(openTicket.Created)}
-                                            </div>
-                                            <div class="col-sm-6">
-                                                <strong>Assigned To:</strong> ${formatValue(openTicket['Assigned to'])}
-                                            </div>
+                                        <div class="col-sm-6">
+                                            <strong>Customer:</strong> ${formatValue(openTicket.Customer)}
                                         </div>
                                     </div>
-                                    <div class="col-md-4">
-                                        <div class="suggested-fix-box">
-                                            <h6><i class="fas fa-lightbulb me-2"></i>Suggested Fix:</h6>
-                                            <div style="font-size: 0.9em; white-space: pre-wrap;">${match.suggested_fix}</div>
+                                    <div class="row mt-2">
+                                        <div class="col-sm-6">
+                                            <strong>Created:</strong> ${formatValue(openTicket.Created)}
                                         </div>
+                                        <div class="col-sm-6">
+                                            <strong>Assigned To:</strong> ${formatValue(openTicket['Assigned to'])}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Analysis Section -->
+                                <div class="analysis-section">
+                                    <!-- Root Cause Analysis -->
+                                    <div class="root-cause-box">
+                                        <h6><i class="fas fa-search-plus analysis-icon text-warning"></i>Root Cause Analysis:</h6>
+                                        <div class="analysis-content">${rootCause}</div>
+                                    </div>
+                                    
+                                    <!-- Suggested Fix -->
+                                    <div class="suggested-fix-box">
+                                        <h6><i class="fas fa-lightbulb analysis-icon text-info"></i>Suggested Resolution:</h6>
+                                        <div class="analysis-content">${suggestedFix}</div>
                                     </div>
                                 </div>
                                 
