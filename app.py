@@ -13,9 +13,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-# LLM imports
-from langchain_ollama import ChatOllama
-from langchain_core.prompts import ChatPromptTemplate
+# OpenAI imports (replacing LangChain imports)
 from openai import OpenAI
 
 warnings.filterwarnings('ignore')
@@ -34,13 +32,18 @@ DEFAULT_THRESHOLD = 0.75
 REQUIRED_COLUMNS = ['Number', 'Short Description', 'Assignment group', 'Customer', 'Created', 'Assigned to']
 PREFERRED_COLUMNS = REQUIRED_COLUMNS + ['Close Notes', 'Resolved by']
 
-# Initialize the LLM globally
+# Initialize OpenAI client globally
 try:
-    llm = ChatOllama(model="mistral")
-    logging.info("LLM initialized successfully with model: mistral")
+    # Initialize OpenAI client - you can set API key in environment variable or directly here
+    openai_client = OpenAI(
+        api_key=os.getenv("OPENAI_API_KEY", "#API_KEY#")
+    )
+    llm = openai_client  # Keep the same variable name for compatibility
+    logging.info("OpenAI GPT initialized successfully")
 except Exception as e:
-    logging.error(f"Failed to initialize LLM: {str(e)}")
+    logging.error(f"Failed to initialize OpenAI GPT: {str(e)}")
     llm = None
+    openai_client = None
 
 # Updated template for generating root cause and suggested fixes separately
 analysis_template = """You are a highly experienced SAP IT support specialist specializing in analyzing closed support tickets to provide actionable solutions for similar open tickets.
@@ -100,13 +103,12 @@ def preprocess_text(text):
     
     return ' '.join(words).strip()
 
-def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=""):
+def generate_root_cause_and_fix_with_openai(similar_closed_tickets, open_ticket_description=""):
     """
     Generate separate root cause analysis and suggested fix for open ticket 
-    based on Close Notes from similar closed tickets
-    Enhanced with LLM for better, more coherent analysis
+    using OpenAI GPT instead of Ollama
     """
-    global llm
+    global openai_client
     
     try:
         closing_notes = []
@@ -124,34 +126,45 @@ def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=
                 'suggested_fix': "Please investigate manually or contact the appropriate support team for detailed analysis."
             }
         
-        # If only one closing note or LLM is not available, return basic format
-        if len(closing_notes) == 1 or llm is None:
+        # If only one closing note or OpenAI client is not available, return basic format
+        if len(closing_notes) == 1 or openai_client is None:
             basic_notes = "\n".join(closing_notes)
             return {
                 'root_cause': f"Based on similar resolved ticket:\n\n{basic_notes}\n\n(Manual analysis required for detailed root cause identification)",
                 'suggested_fix': f"Follow the resolution approach from similar ticket:\n\n{basic_notes}" + 
-                               ("\n\n(Note: AI enhancement unavailable - LLM not initialized)" if llm is None else "")
+                               ("\n\n(Note: AI enhancement unavailable - OpenAI client not initialized)" if openai_client is None else "")
             }
         
-        # Use LLM to generate enhanced analysis when multiple closing notes exist
+        # Use OpenAI GPT to generate enhanced analysis when multiple closing notes exist
         closing_notes_text = "\n".join(closing_notes)
         
-        # Create prompt template
-        prompt = ChatPromptTemplate.from_template(analysis_template)
+        # Create the prompt
+        prompt = analysis_template.format(
+            closing_notes=closing_notes_text,
+            open_ticket_description=open_ticket_description
+        )
         
-        # Create chain
-        chain = prompt | llm
+        logging.info(f"Generating OpenAI GPT-enhanced analysis for ticket with {len(closing_notes)} similar closing notes")
         
-        logging.info(f"Generating AI-enhanced analysis for ticket with {len(closing_notes)} similar closing notes")
-        
-        # Generate enhanced analysis
-        response = chain.invoke({
-            "closing_notes": closing_notes_text,
-            "open_ticket_description": open_ticket_description
-        })
+        # Generate enhanced analysis using OpenAI
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",  # You can also use "gpt-4o" or "gpt-3.5-turbo"
+            messages=[
+                {
+                    "role": "system", 
+                    "content": "You are an expert SAP IT support specialist. Provide structured, professional analysis of support tickets."
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ],
+            max_tokens=1500,
+            temperature=0.3  # Lower temperature for more consistent technical responses
+        )
         
         # Extract and clean the response
-        analysis_content = response.content.strip()
+        analysis_content = response.choices[0].message.content.strip()
         
         # Split the response into root cause and suggested fix
         root_cause = ""
@@ -169,16 +182,16 @@ def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=
             suggested_fix = analysis_content
             root_cause = "Root cause analysis requires further investigation based on the available information."
         
-        logging.info("AI-enhanced analysis generated successfully")
+        logging.info("OpenAI GPT-enhanced analysis generated successfully")
         return {
             'root_cause': root_cause,
             'suggested_fix': suggested_fix
         }
         
     except Exception as e:
-        logging.error(f"Error generating LLM-enhanced analysis: {str(e)}")
+        logging.error(f"Error generating OpenAI GPT-enhanced analysis: {str(e)}")
         
-        # Fallback to original method if LLM fails
+        # Fallback to original method if OpenAI fails
         closing_notes = []
         for ticket in similar_closed_tickets:
             closing_note = ticket.get('Close Notes', '').strip()
@@ -188,7 +201,7 @@ def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=
         if closing_notes:
             fallback_notes = "\n".join(closing_notes)
             return {
-                'root_cause': f"Based on similar resolved tickets (AI analysis failed):\n\n{fallback_notes}\n\nError: {str(e)}",
+                'root_cause': f"Based on similar resolved tickets (OpenAI analysis failed):\n\n{fallback_notes}\n\nError: {str(e)}",
                 'suggested_fix': f"Follow resolution approach from similar tickets:\n\n{fallback_notes}\n\n(Note: AI enhancement failed)"
             }
         else:
@@ -196,6 +209,11 @@ def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=
                 'root_cause': "No closing notes available for root cause analysis",
                 'suggested_fix': "No resolution guidance available from similar tickets"
             }
+
+# Keep the original function name for backward compatibility
+def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=""):
+    """Wrapper function to maintain compatibility"""
+    return generate_root_cause_and_fix_with_openai(similar_closed_tickets, open_ticket_description)
 
 def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment_group_filter=None, threshold=0.75):
     """
@@ -292,7 +310,7 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
             for col in open_df.columns:
                 open_ticket_data[col] = clean_value(open_ticket_row[col])
             
-            # Generate root cause and suggested fix with LLM enhancement
+            # Generate root cause and suggested fix with OpenAI GPT enhancement
             open_description = clean_value(open_ticket_row.get('Short Description', ''))
             analysis_result = generate_root_cause_and_fix(similar_closed, open_description)
             
@@ -364,7 +382,7 @@ def create_excel_export(results, analysis_params):
         ["Total Open Tickets Analyzed", analysis_params.get('filtered_open_tickets', 0)],
         ["Open Tickets with Matches", analysis_params.get('open_tickets_with_matches', 0)],
         ["Total Similar Closed Tickets Found", analysis_params.get('total_matches', 0)],
-        ["LLM Status", "Available" if llm is not None else "Unavailable"],
+        ["LLM Status", "OpenAI GPT Available" if llm is not None else "Unavailable"],
         ["Analysis Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
     ]
     
@@ -551,7 +569,7 @@ def index():
             'has_closing_note': 'Close Notes' in closed_df.columns,
             'has_resolved_by': 'Resolved by' in closed_df.columns,
             'llm_available': llm is not None,
-            'llm_model': 'mistral' if llm is not None else 'None'
+            'llm_model': 'OpenAI GPT-4o-mini' if llm is not None else 'None'
         }
         
         # Check if we have minimum required columns for analysis
@@ -639,67 +657,87 @@ def analyze():
 @app.route('/llm_status')
 def llm_status():
     """
-    Check if LLM is available and working
+    Check if OpenAI GPT is available and working
     """
-    global llm
+    global openai_client
     
-    if llm is None:
+    if openai_client is None:
         return jsonify({
             'available': False,
-            'error': 'LLM not initialized',
+            'error': 'OpenAI client not initialized',
             'model': None
         })
     
     try:
-        # Test the LLM with a simple message
-        test_response = llm.invoke("Test connection")
+        # Test the OpenAI client with a simple message
+        test_response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "Test connection"}],
+            max_tokens=10
+        )
         return jsonify({
             'available': True,
             'status': 'Working',
-            'model': 'mistral',
-            'test_response_length': len(test_response.content) if hasattr(test_response, 'content') else 0
+            'model': 'OpenAI GPT-4o-mini',
+            'test_response_length': len(test_response.choices[0].message.content)
         })
     except Exception as e:
-        logging.error(f"LLM test failed: {str(e)}")
+        logging.error(f"OpenAI GPT test failed: {str(e)}")
         return jsonify({
             'available': False,
             'error': str(e),
-            'model': 'mistral'
+            'model': 'OpenAI GPT-4o-mini'
         })
 
 @app.route('/configure_llm', methods=['POST'])
 def configure_llm():
     """
-    Endpoint to configure LLM settings
+    Endpoint to configure OpenAI settings
     """
-    global llm
+    global llm, openai_client
     
     try:
         data = request.get_json()
-        model_name = data.get('model', 'mistral')
-        base_url = data.get('base_url')
+        api_key = data.get('api_key')
+        model_name = data.get('model', 'gpt-4o-mini')
+        base_url = data.get('base_url')  # Optional for custom OpenAI endpoints
         
-        if base_url:
-            llm = ChatOllama(model=model_name, base_url=base_url)
+        # Configure OpenAI client
+        if api_key:
+            if base_url:
+                openai_client = OpenAI(api_key=api_key, base_url=base_url)
+            else:
+                openai_client = OpenAI(api_key=api_key)
         else:
-            llm = ChatOllama(model=model_name)
+            # Use existing API key from environment or default
+            if base_url:
+                openai_client = OpenAI(base_url=base_url)
+            else:
+                openai_client = OpenAI()
         
-        # Test the LLM
-        test_response = llm.invoke("Test message")
-        logging.info(f"LLM reconfigured successfully with model: {model_name}")
+        llm = openai_client  # Keep compatibility
+        
+        # Test the OpenAI client
+        test_response = openai_client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": "Test message"}],
+            max_tokens=10
+        )
+        
+        logging.info(f"OpenAI client reconfigured successfully with model: {model_name}")
         
         return jsonify({
             'success': True, 
-            'message': f'LLM configured successfully with model: {model_name}',
+            'message': f'OpenAI GPT configured successfully with model: {model_name}',
             'model': model_name,
             'base_url': base_url
         })
         
     except Exception as e:
-        logging.error(f"Failed to configure LLM: {str(e)}")
+        logging.error(f"Failed to configure OpenAI GPT: {str(e)}")
         return jsonify({
             'success': False, 
-            'error': f'Failed to configure LLM: {str(e)}'
+            'error': f'Failed to configure OpenAI GPT: {str(e)}'
         }), 500
 
 @app.route('/export_excel', methods=['POST'])
@@ -733,10 +771,20 @@ def export_excel():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
-    # Print LLM status on startup
+    # Print OpenAI GPT status on startup
     if llm is not None:
-        print("✅ LLM initialized successfully - AI-enhanced suggestions available")
+        print("✅ OpenAI GPT initialized successfully - AI-enhanced suggestions available")
+        try:
+            # Test connection
+            test_response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            print("✅ OpenAI GPT connection test successful")
+        except Exception as e:
+            print(f"⚠️ OpenAI GPT connection test failed: {str(e)}")
     else:
-        print("⚠️ LLM not available - will use basic suggestion format")
+        print("⚠️ OpenAI GPT not available - will use basic suggestion format")
     
     app.run(debug=True)
