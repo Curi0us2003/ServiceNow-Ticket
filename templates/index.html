@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -11,135 +12,167 @@
             background-color: #f8f9fa;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
+
         .card {
             border: none;
-            box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.075);
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
             margin-bottom: 1rem;
         }
+
         .alert-info {
             border-left: 4px solid #0dcaf0;
         }
+
         .alert-danger {
             border-left: 4px solid #dc3545;
         }
+
         .similarity-score {
             font-size: 1.1em;
             font-weight: bold;
         }
+
         .ticket-table {
             font-size: 0.9em;
         }
+
         .ticket-table th {
             background-color: #f8f9fa;
             border-top: none;
             font-weight: 600;
         }
+
         .open-ticket-header {
             background: linear-gradient(45deg, #dc3545 0%, #fd7e14 100%);
             color: white;
         }
+
         .closed-ticket-header {
             background: linear-gradient(45deg, #28a745 0%, #20c997 100%);
             color: white;
         }
+
         .original-text {
             font-style: italic;
             color: #6c757d;
             font-size: 0.85em;
             margin-top: 0.25rem;
         }
+
         .translation-badge {
             font-size: 0.7em;
         }
+
         .loading-spinner {
             display: none;
         }
+
         .results-section {
             display: none;
         }
+
         .analysis-form {
             position: sticky;
             top: 20px;
             z-index: 1000;
         }
+
         .stats-card {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
+
         .match-container {
             border-left: 4px solid #28a745;
             background-color: #f8f9fa;
         }
+
         .open-ticket-card {
             border-left: 4px solid #dc3545;
         }
+
         .closed-ticket-badge {
             background: linear-gradient(45deg, #28a745, #20c997);
         }
+
         .similarity-indicator {
             font-size: 0.9em;
             padding: 0.25rem 0.5rem;
             border-radius: 1rem;
         }
+
         .high-similarity {
             background-color: #d4edda;
             color: #155724;
             border: 1px solid #c3e6cb;
         }
+
         .medium-similarity {
             background-color: #fff3cd;
             color: #856404;
             border: 1px solid #ffeaa7;
         }
+
         .low-similarity {
             background-color: #f8d7da;
             color: #721c24;
             border: 1px solid #f1b0b7;
         }
+
         .ticket-summary {
             cursor: pointer;
             transition: all 0.3s ease;
         }
+
         .ticket-summary:hover {
             background-color: #e9ecef;
         }
+
         .ticket-details {
             display: none;
             background-color: #f8f9fa;
             border-top: 2px solid #e9ecef;
         }
+
         .ticket-details.show {
             display: table-row;
         }
+
         .expand-icon {
             transition: transform 0.3s ease;
         }
+
         .expand-icon.rotated {
             transform: rotate(90deg);
         }
+
         .additional-info {
             background-color: #e7f3ff;
             border-radius: 0.375rem;
             padding: 1rem;
         }
+
         .suggested-fix-empty {
             color: #6c757d;
             font-style: italic;
         }
+
         .export-section {
             display: none;
             margin-top: 1rem;
             padding-top: 1rem;
             border-top: 1px solid #dee2e6;
         }
+
         .export-section.show {
             display: block;
         }
+
         .closed-ticket-row {
             background-color: #f8f9fa;
             border-left: 3px solid #28a745;
         }
-        
+
         /* New styles for root cause and suggested fix sections */
         .root-cause-box {
             background-color: #fff3cd;
@@ -148,6 +181,7 @@
             margin-top: 1rem;
             border-radius: 0.375rem;
         }
+
         .suggested-fix-box {
             background-color: #e7f3ff;
             border-left: 4px solid #0dcaf0;
@@ -155,13 +189,16 @@
             margin-top: 1rem;
             border-radius: 0.375rem;
         }
+
         .analysis-section {
             margin: 1.5rem 0;
             padding: 0 0.5rem;
         }
+
         .analysis-icon {
             margin-right: 0.5rem;
         }
+
         .analysis-content {
             font-size: 0.95em;
             line-height: 1.5;
@@ -169,6 +206,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container-fluid mt-4">
         <div class="row">
@@ -197,10 +235,12 @@
                                         <p class="mb-1 small"><strong>Open:</strong> <span id="openCount"></span></p>
                                     </div>
                                     <div class="col-6">
-                                        <p class="mb-1 small"><strong>Closed:</strong> <span id="closedCount"></span></p>
+                                        <p class="mb-1 small"><strong>Closed:</strong> <span id="closedCount"></span>
+                                        </p>
                                     </div>
                                 </div>
-                                <p class="mb-0 small"><strong>Assignment Groups:</strong> <span id="groupCount"></span></p>
+                                <p class="mb-0 small"><strong>Assignment Groups:</strong> <span id="groupCount"></span>
+                                </p>
                             </div>
 
                             <!-- Column Status -->
@@ -221,7 +261,8 @@
                             <!-- Analysis Form -->
                             <form id="analysisForm">
                                 <div class="mb-3">
-                                    <label for="assignment_group" class="form-label"><strong>Assignment Group Filter</strong></label>
+                                    <label for="assignment_group" class="form-label"><strong>Assignment Group
+                                            Filter</strong></label>
                                     <select class="form-select" id="assignment_group" name="assignment_group">
                                         <option value="All">All Assignment Groups</option>
                                     </select>
@@ -229,10 +270,11 @@
                                 </div>
 
                                 <div class="mb-3">
-                                    <label for="threshold" class="form-label"><strong>Similarity Threshold</strong></label>
-                                    <input type="range" class="form-range" id="threshold" name="threshold"
-                                           min="0.3" max="0.95" step="0.05" value="0.75"
-                                           oninput="document.getElementById('thresholdValue').textContent = Math.round(this.value * 100) + '%'">
+                                    <label for="threshold" class="form-label"><strong>Similarity
+                                            Threshold</strong></label>
+                                    <input type="range" class="form-range" id="threshold" name="threshold" min="0.3"
+                                        max="0.95" step="0.05" value="0.75"
+                                        oninput="document.getElementById('thresholdValue').textContent = Math.round(this.value * 100) + '%'">
                                     <div class="d-flex justify-content-between">
                                         <small>30%</small>
                                         <span id="thresholdValue" class="badge bg-primary">75%</span>
@@ -271,7 +313,8 @@
                     <div class="card-body text-center py-5">
                         <i class="fas fa-sync-alt fa-4x text-muted mb-4"></i>
                         <h3 class="text-muted">Open vs Closed Ticket Matching</h3>
-                        <p class="text-muted">Find closed tickets that are similar to your open tickets using semantic analysis.</p>
+                        <p class="text-muted">Find closed tickets that are similar to your open tickets using semantic
+                            analysis.</p>
                         <div class="row mt-4">
                             <div class="col-md-3">
                                 <i class="fas fa-brain fa-2x text-primary mb-2"></i>
@@ -312,9 +355,9 @@
     <script>
         let currentResults = null;
         let currentAnalysisParams = {};
-        
+
         // Initialize page on load
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
             loadInitialData();
         });
 
@@ -324,7 +367,7 @@
             document.getElementById('analysisForm').style.display = 'block';
         }
 
-        document.getElementById('analysisForm').addEventListener('submit', function(e) {
+        document.getElementById('analysisForm').addEventListener('submit', function (e) {
             e.preventDefault();
 
             document.getElementById('analyzeBtn').disabled = true;
@@ -339,30 +382,30 @@
                 body: formData,
                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
             })
-            .then(response => response.json())
-            .then(data => {
-                document.getElementById('analyzeBtn').disabled = false;
-                document.querySelector('.loading-spinner').style.display = 'none';
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('analyzeBtn').disabled = false;
+                    document.querySelector('.loading-spinner').style.display = 'none';
 
-                if (data.success) {
-                    currentResults = data.results;
-                    currentAnalysisParams = {
-                        assignment_group_filter: data.assignment_group_filter,
-                        threshold_percentage: data.threshold_percentage,
-                        filtered_open_tickets: data.filtered_open_tickets,
-                        open_tickets_with_matches: data.open_tickets_with_matches,
-                        total_matches: data.total_matches
-                    };
-                    displayResults(data);
-                } else {
-                    showError(data.error || 'Unknown error occurred');
-                }
-            })
-            .catch(error => {
-                document.getElementById('analyzeBtn').disabled = false;
-                document.querySelector('.loading-spinner').style.display = 'none';
-                showError(`Network/Server error: ${error.message}`);
-            });
+                    if (data.success) {
+                        currentResults = data.results;
+                        currentAnalysisParams = {
+                            assignment_group_filter: data.assignment_group_filter,
+                            threshold_percentage: data.threshold_percentage,
+                            filtered_open_tickets: data.filtered_open_tickets,
+                            open_tickets_with_matches: data.open_tickets_with_matches,
+                            total_matches: data.total_matches
+                        };
+                        displayResults(data);
+                    } else {
+                        showError(data.error || 'Unknown error occurred');
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('analyzeBtn').disabled = false;
+                    document.querySelector('.loading-spinner').style.display = 'none';
+                    showError(`Network/Server error: ${error.message}`);
+                });
         });
 
         function toggleTicketDetails(matchIndex, ticketIndex) {
@@ -390,7 +433,7 @@
         function displayResults(data) {
             document.querySelector('.results-section').style.display = 'block';
             document.getElementById('exportSection').classList.add('show');
-            
+
             // Display stats cards
             const statsHtml = `
                 <div class="col-md-3">
@@ -434,7 +477,7 @@
 
             // Display results
             let resultsHtml = '';
-            
+
             if (data.results.length === 0) {
                 resultsHtml = `
                     <div class="card">
@@ -449,9 +492,14 @@
                 data.results.forEach((match, matchIndex) => {
                     const openTicket = match.open_ticket;
                     const similarTickets = match.similar_closed_tickets;
+                    //chnage for bold
                     const rootCause = match.root_cause || 'No root cause analysis available';
                     const suggestedFix = match.suggested_fix || 'No suggested fix available';
-                    
+                    const rootCauseHtml = marked.parse(rootCause);
+                    const suggestedFixHtml = marked.parse(suggestedFix);
+                    //change for bold
+
+
                     resultsHtml += `
                         <div class="card mb-4">
                             <div class="card-header open-ticket-header">
@@ -490,13 +538,15 @@
                                     <!-- Root Cause Analysis -->
                                     <div class="root-cause-box">
                                         <h6><i class="fas fa-search-plus analysis-icon text-warning"></i>Root Cause Analysis:</h6>
-                                        <div class="analysis-content">${rootCause}</div>
+                                        <!-- change for bold -->
+                                         <div class="analysis-content">${rootCauseHtml}</div>
                                     </div>
                                     
                                     <!-- Suggested Fix -->
                                     <div class="suggested-fix-box">
                                         <h6><i class="fas fa-lightbulb analysis-icon text-info"></i>Suggested Resolution:</h6>
-                                        <div class="analysis-content">${suggestedFix}</div>
+                                           <!-- change for bold -->
+                                       <div class="analysis-content">${suggestedFixHtml}</div>
                                     </div>
                                 </div>
                                 
@@ -518,10 +568,10 @@
                                         </thead>
                                         <tbody>
                     `;
-                    
+
                     similarTickets.forEach((closedTicket, ticketIndex) => {
                         const similarityClass = getSimilarityClass(closedTicket['Similarity Score']);
-                        
+
                         resultsHtml += `
                             <tr class="ticket-summary closed-ticket-row" onclick="toggleTicketDetails(${matchIndex}, ${ticketIndex})">
                                 <td>
@@ -561,7 +611,7 @@
                             </tr>
                         `;
                     });
-                    
+
                     resultsHtml += `
                                         </tbody>
                                     </table>
@@ -571,7 +621,7 @@
                     `;
                 });
             }
-            
+
             document.getElementById('resultsContainer').innerHTML = resultsHtml;
         }
 
@@ -608,26 +658,29 @@
                 },
                 body: JSON.stringify(exportData)
             })
-            .then(response => {
-                if (response.ok) {
-                    return response.blob();
-                }
-                throw new Error('Export failed');
-            })
-            .then(blob => {
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                a.download = `ticket_similarity_analysis_${new Date().toISOString().slice(0,10)}.xlsx`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-            })
-            .catch(error => {
-                alert('Export failed: ' + error.message);
-            });
+                .then(response => {
+                    if (response.ok) {
+                        return response.blob();
+                    }
+                    throw new Error('Export failed');
+                })
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = `ticket_similarity_analysis_${new Date().toISOString().slice(0, 10)}.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(error => {
+                    alert('Export failed: ' + error.message);
+                });
         }
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
 </body>
+
 </html>
