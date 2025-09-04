@@ -16,6 +16,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 # LLM imports
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
+from openai import OpenAI
 
 warnings.filterwarnings('ignore')
 
@@ -36,31 +37,46 @@ PREFERRED_COLUMNS = REQUIRED_COLUMNS + ['Close Notes', 'Resolved by']
 # Initialize the LLM globally
 try:
     llm = ChatOllama(model="mistral")
-    logging.info("LLM initialized successfully with model: llama3")
+    logging.info("LLM initialized successfully with model: mistral")
 except Exception as e:
     logging.error(f"Failed to initialize LLM: {str(e)}")
     llm = None
 
-# Template for generating suggested fixes
-suggestion_template = """You are an IT support expert analyzing closed support tickets to provide actionable solutions for similar open tickets.
+# Updated template for generating root cause and suggested fixes separately
+analysis_template = """You are a highly experienced SAP IT support specialist specializing in analyzing closed support tickets to provide actionable solutions for similar open tickets.
 
-        Based on the following closing notes from similar resolved tickets, provide a comprehensive and actionable suggested fix:
+Using your deep knowledge of SAP systems, modules, and official SAP Notes, consider the following inputs:
 
-        Closing Notes from Similar Tickets:
-        {closing_notes}
+Closing Notes from Similar Tickets:
+{closing_notes}
 
-        Open Ticket Description:
-        {open_ticket_description}
+Open Ticket Description:
+{open_ticket_description}
 
-        Please provide:
-        1. A clear, step-by-step solution based on the patterns you see in the closing notes
-        2. Common root causes identified from the similar tickets
-        3. Any preventive measures if applicable
-        4. If the closing notes are too generic or unhelpful, provide general troubleshooting steps for this type of issue
+Please analyze the above information and provide a structured response with TWO distinct sections:
 
-        Format your response in a clear, professional manner that a support technician can easily follow.
+## ROOT CAUSE ANALYSIS:
+Identify and explain the likely root causes based on patterns in the closing notes and your SAP expertise. Focus on:
+- Technical reasons for the issue
+- System configuration problems
+- User access or permission issues
+- Data inconsistencies
+- Integration problems
+- Performance bottlenecks
 
-        Suggested Fix:"""
+## SUGGESTED RESOLUTION:
+Provide a step-by-step solution that an SAP support technician can follow, including:
+1. Immediate troubleshooting steps
+2. Configuration changes needed
+3. Relevant SAP transaction codes and tools
+4. SAP Notes or documentation references
+5. Testing procedures
+6. Preventive measures for future occurrences
+7. Escalation procedures if the steps don't resolve the issue
+
+Format your response clearly with these two sections. Use professional technical language suitable for SAP support staff.
+
+If the closing notes lack sufficient detail, provide generalized SAP troubleshooting guidance applicable to this type of issue."""
 
 def clean_value(value):
     if pd.isna(value):
@@ -84,10 +100,11 @@ def preprocess_text(text):
     
     return ' '.join(words).strip()
 
-def generate_suggested_fix(similar_closed_tickets, open_ticket_description=""):
+def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=""):
     """
-    Generate suggested fix for open ticket based on Close Notes from similar closed tickets
-    Enhanced with LLM for better, more coherent suggestions
+    Generate separate root cause analysis and suggested fix for open ticket 
+    based on Close Notes from similar closed tickets
+    Enhanced with LLM for better, more coherent analysis
     """
     global llm
     
@@ -102,43 +119,64 @@ def generate_suggested_fix(similar_closed_tickets, open_ticket_description=""):
         
         # If no meaningful closing notes found
         if not closing_notes:
-            return "No meaningful closing notes available from similar tickets. Please investigate manually or contact the appropriate support team."
+            return {
+                'root_cause': "No meaningful closing notes available from similar tickets for root cause analysis.",
+                'suggested_fix': "Please investigate manually or contact the appropriate support team for detailed analysis."
+            }
         
         # If only one closing note or LLM is not available, return basic format
         if len(closing_notes) == 1 or llm is None:
-            basic_fix = "Based on similar resolved ticket(s):\n\n" + "\n".join(closing_notes)
-            if llm is None:
-                basic_fix += "\n\n(Note: AI enhancement unavailable - LLM not initialized)"
-            return basic_fix
+            basic_notes = "\n".join(closing_notes)
+            return {
+                'root_cause': f"Based on similar resolved ticket:\n\n{basic_notes}\n\n(Manual analysis required for detailed root cause identification)",
+                'suggested_fix': f"Follow the resolution approach from similar ticket:\n\n{basic_notes}" + 
+                               ("\n\n(Note: AI enhancement unavailable - LLM not initialized)" if llm is None else "")
+            }
         
-        # Use LLM to generate enhanced suggestion when multiple closing notes exist
+        # Use LLM to generate enhanced analysis when multiple closing notes exist
         closing_notes_text = "\n".join(closing_notes)
         
         # Create prompt template
-        prompt = ChatPromptTemplate.from_template(suggestion_template)
+        prompt = ChatPromptTemplate.from_template(analysis_template)
         
         # Create chain
         chain = prompt | llm
         
-        logging.info(f"Generating AI-enhanced suggestion for ticket with {len(closing_notes)} similar closing notes")
+        logging.info(f"Generating AI-enhanced analysis for ticket with {len(closing_notes)} similar closing notes")
         
-        # Generate enhanced suggestion
+        # Generate enhanced analysis
         response = chain.invoke({
             "closing_notes": closing_notes_text,
             "open_ticket_description": open_ticket_description
         })
         
         # Extract and clean the response
-        suggested_fix = response.content.strip()
+        analysis_content = response.content.strip()
         
-        # Add header to indicate LLM enhancement
-        enhanced_fix = f"AI-Enhanced Suggested Fix (based on {len(closing_notes)} similar tickets):\n\n{suggested_fix}"
+        # Split the response into root cause and suggested fix
+        root_cause = ""
+        suggested_fix = ""
         
-        logging.info("AI-enhanced suggestion generated successfully")
-        return enhanced_fix
+        if "## ROOT CAUSE ANALYSIS:" in analysis_content and "## SUGGESTED RESOLUTION:" in analysis_content:
+            parts = analysis_content.split("## SUGGESTED RESOLUTION:")
+            root_cause_part = parts[0].replace("## ROOT CAUSE ANALYSIS:", "").strip()
+            suggested_fix_part = parts[1].strip()
+            
+            root_cause = root_cause_part if root_cause_part else "Root cause analysis not clearly identified in the response."
+            suggested_fix = suggested_fix_part if suggested_fix_part else "Suggested resolution not clearly provided in the response."
+        else:
+            # If the format is not as expected, treat the whole response as suggested fix
+            suggested_fix = analysis_content
+            root_cause = "Root cause analysis requires further investigation based on the available information."
+        
+        logging.info("AI-enhanced analysis generated successfully")
+        return {
+            'root_cause': root_cause,
+            'suggested_fix': suggested_fix
+        }
         
     except Exception as e:
-        logging.error(f"Error generating LLM-enhanced suggestion: {str(e)}")
+        logging.error(f"Error generating LLM-enhanced analysis: {str(e)}")
         
         # Fallback to original method if LLM fails
         closing_notes = []
@@ -148,11 +186,16 @@ def generate_suggested_fix(similar_closed_tickets, open_ticket_description=""):
                 closing_notes.append(f"• {closing_note}")
         
         if closing_notes:
-            fallback_fix = "Based on similar resolved tickets:\n\n" + "\n".join(closing_notes)
-            fallback_fix += f"\n\n(Note: AI enhancement failed - showing original closing notes. Error: {str(e)})"
-            return fallback_fix
+            fallback_notes = "\n".join(closing_notes)
+            return {
+                'root_cause': f"Based on similar resolved tickets (AI analysis failed):\n\n{fallback_notes}\n\nError: {str(e)}",
+                'suggested_fix': f"Follow resolution approach from similar tickets:\n\n{fallback_notes}\n\n(Note: AI enhancement failed)"
+            }
         else:
-            return "No closing notes available from similar tickets"
+            return {
+                'root_cause': "No closing notes available for root cause analysis",
+                'suggested_fix': "No resolution guidance available from similar tickets"
+            }
 
 def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment_group_filter=None, threshold=0.75):
     """
@@ -249,16 +292,17 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
             for col in open_df.columns:
                 open_ticket_data[col] = clean_value(open_ticket_row[col])
             
-            # Generate suggested fix with LLM enhancement - pass open ticket description
+            # Generate root cause and suggested fix with LLM enhancement
             open_description = clean_value(open_ticket_row.get('Short Description', ''))
-            suggested_fix = generate_suggested_fix(similar_closed, open_description)
+            analysis_result = generate_root_cause_and_fix(similar_closed, open_description)
             
             results.append({
                 'open_ticket': open_ticket_data,
                 'similar_closed_tickets': similar_closed,
                 'best_similarity_score': similar_closed[0]['Similarity Score'],
                 'total_similar_closed': len(similar_closed),
-                'suggested_fix': suggested_fix
+                'root_cause': analysis_result['root_cause'],
+                'suggested_fix': analysis_result['suggested_fix']
             })
     
     # Sort results by best similarity score
@@ -289,7 +333,7 @@ def validate_columns(df, dataset_name):
 
 def create_excel_export(results, analysis_params):
     """
-    Create Excel file with analysis results
+    Create Excel file with analysis results including separate root cause and suggested fix
     """
     wb = Workbook()
     
@@ -408,6 +452,34 @@ def create_excel_export(results, analysis_params):
         adjusted_width = min(max_length + 2, 50)  # Cap at 50 characters
         details_ws.column_dimensions[column].width = adjusted_width
     
+    # Create Root Cause Analysis sheet
+    root_cause_ws = wb.create_sheet("Root Cause Analysis")
+    
+    root_cause_data = [["Open Ticket Number", "Root Cause Analysis"]]
+    
+    for match in results:
+        open_ticket = match['open_ticket']
+        root_cause = match['root_cause']
+        
+        root_cause_data.append([
+            open_ticket.get('Number', ''),
+            root_cause
+        ])
+    
+    # Write root cause data
+    for row_idx, row_data in enumerate(root_cause_data, 1):
+        for col_idx, value in enumerate(row_data, 1):
+            cell = root_cause_ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.border = border
+            cell.alignment = Alignment(wrap_text=True, vertical='top')
+            
+            if row_idx == 1:  # Header row
+                cell.font = header_font
+                cell.fill = header_fill
+    
+    root_cause_ws.column_dimensions['A'].width = 20
+    root_cause_ws.column_dimensions['B'].width = 80
+    
     # Create Suggested Fixes sheet
     fixes_ws = wb.create_sheet("Suggested Fixes")
     
@@ -479,7 +551,7 @@ def index():
             'has_closing_note': 'Close Notes' in closed_df.columns,
             'has_resolved_by': 'Resolved by' in closed_df.columns,
             'llm_available': llm is not None,
-            'llm_model': 'llama3' if llm is not None else 'None'
+            'llm_model': 'mistral' if llm is not None else 'None'
         }
         
         # Check if we have minimum required columns for analysis
@@ -555,7 +627,7 @@ def analyze():
             'has_closing_note': 'Close Notes' in closed_df.columns,
             'has_resolved_by': 'Resolved by' in closed_df.columns,
             'llm_available': llm is not None,
-            'ai_enhanced_count': sum(1 for r in results if 'AI-Enhanced' in r.get('suggested_fix', ''))
+            'ai_enhanced_count': sum(1 for r in results if 'ROOT CAUSE ANALYSIS:' in r.get('root_cause', ''))
         }
         
         return jsonify(response)
@@ -584,7 +656,7 @@ def llm_status():
         return jsonify({
             'available': True,
             'status': 'Working',
-            'model': 'llama3',
+            'model': 'mistral',
             'test_response_length': len(test_response.content) if hasattr(test_response, 'content') else 0
         })
     except Exception as e:
@@ -592,7 +664,7 @@ def llm_status():
         return jsonify({
             'available': False,
             'error': str(e),
-            'model': 'llama3'
+            'model': 'mistral'
         })
 
 @app.route('/configure_llm', methods=['POST'])
@@ -604,7 +676,7 @@ def configure_llm():
     
     try:
         data = request.get_json()
-        model_name = data.get('model', 'llama3')
+        model_name = data.get('model', 'mistral')
         base_url = data.get('base_url')
         
         if base_url:
