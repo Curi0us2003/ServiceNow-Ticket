@@ -13,8 +13,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-# OpenAI imports (replacing LangChain imports)
-from openai import OpenAI
+# Gemini imports
+import requests
+import json
 
 warnings.filterwarnings('ignore')
 
@@ -32,18 +33,82 @@ DEFAULT_THRESHOLD = 0.75
 REQUIRED_COLUMNS = ['Number', 'Short Description', 'Assignment group', 'Customer', 'Created', 'Assigned to']
 PREFERRED_COLUMNS = REQUIRED_COLUMNS + ['Close Notes', 'Resolved by']
 
-# Initialize OpenAI client globally
+# Gemini API configuration
+GEMINI_API_KEY = "#API_KEY#"
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+
+class GeminiClient:
+    """Simple Gemini API client"""
+    
+    def __init__(self, api_key):
+        self.api_key = api_key
+        self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        self.headers = {"Content-Type": "application/json"}
+    
+    def generate_content(self, prompt, max_tokens=1500, temperature=0.3):
+        """Generate content using Gemini API"""
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt}
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens,
+                "candidateCount": 1
+            }
+        }
+        
+        try:
+            response = requests.post(self.api_url, headers=self.headers, data=json.dumps(payload), timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'candidates' in data and len(data['candidates']) > 0:
+                    content = data['candidates'][0]['content']['parts'][0]['text']
+                    return content.strip()
+                else:
+                    raise Exception("No candidates in response")
+            else:
+                raise Exception(f"API request failed with status {response.status_code}: {response.text}")
+                
+        except requests.exceptions.Timeout:
+            raise Exception("Request timed out")
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Network error: {str(e)}")
+        except Exception as e:
+            raise Exception(f"Gemini API error: {str(e)}")
+    
+    def test_connection(self):
+        """Test the Gemini API connection"""
+        try:
+            response = self.generate_content("Test connection", max_tokens=10)
+            return True, response
+        except Exception as e:
+            return False, str(e)
+
+# Initialize Gemini client globally
 try:
-    # Initialize OpenAI client - you can set API key in environment variable or directly here
-    openai_client = OpenAI(
-        api_key=os.getenv("OPENAI_API_KEY", "#API_KEY#")
-    )
-    llm = openai_client  # Keep the same variable name for compatibility
-    logging.info("OpenAI GPT initialized successfully")
+    gemini_api_key = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)
+    gemini_client = GeminiClient(gemini_api_key)
+    
+    # Test the connection
+    is_working, test_result = gemini_client.test_connection()
+    if is_working:
+        logging.info("Gemini API initialized and tested successfully")
+        llm = gemini_client
+    else:
+        logging.error(f"Gemini API test failed: {test_result}")
+        llm = None
+        gemini_client = None
+        
 except Exception as e:
-    logging.error(f"Failed to initialize OpenAI GPT: {str(e)}")
+    logging.error(f"Failed to initialize Gemini API: {str(e)}")
     llm = None
-    openai_client = None
+    gemini_client = None
 
 # Updated template for generating root cause and suggested fixes separately
 analysis_template = """You are a highly experienced SAP IT support specialist specializing in analyzing closed support tickets to provide actionable solutions for similar open tickets.
@@ -103,12 +168,12 @@ def preprocess_text(text):
     
     return ' '.join(words).strip()
 
-def generate_root_cause_and_fix_with_openai(similar_closed_tickets, open_ticket_description=""):
+def generate_root_cause_and_fix_with_gemini(similar_closed_tickets, open_ticket_description=""):
     """
     Generate separate root cause analysis and suggested fix for open ticket 
-    using OpenAI GPT instead of Ollama
+    using Google Gemini instead of OpenAI
     """
-    global openai_client
+    global gemini_client
     
     try:
         closing_notes = []
@@ -126,16 +191,16 @@ def generate_root_cause_and_fix_with_openai(similar_closed_tickets, open_ticket_
                 'suggested_fix': "Please investigate manually or contact the appropriate support team for detailed analysis."
             }
         
-        # If only one closing note or OpenAI client is not available, return basic format
-        if len(closing_notes) == 1 or openai_client is None:
+        # If only one closing note or Gemini client is not available, return basic format
+        if len(closing_notes) == 1 or gemini_client is None:
             basic_notes = "\n".join(closing_notes)
             return {
                 'root_cause': f"Based on similar resolved ticket:\n\n{basic_notes}\n\n(Manual analysis required for detailed root cause identification)",
                 'suggested_fix': f"Follow the resolution approach from similar ticket:\n\n{basic_notes}" + 
-                               ("\n\n(Note: AI enhancement unavailable - OpenAI client not initialized)" if openai_client is None else "")
+                               ("\n\n(Note: AI enhancement unavailable - Gemini client not initialized)" if gemini_client is None else "")
             }
         
-        # Use OpenAI GPT to generate enhanced analysis when multiple closing notes exist
+        # Use Gemini to generate enhanced analysis when multiple closing notes exist
         closing_notes_text = "\n".join(closing_notes)
         
         # Create the prompt
@@ -144,27 +209,14 @@ def generate_root_cause_and_fix_with_openai(similar_closed_tickets, open_ticket_
             open_ticket_description=open_ticket_description
         )
         
-        logging.info(f"Generating OpenAI GPT-enhanced analysis for ticket with {len(closing_notes)} similar closing notes")
+        logging.info(f"Generating Gemini-enhanced analysis for ticket with {len(closing_notes)} similar closing notes")
         
-        # Generate enhanced analysis using OpenAI
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",  # You can also use "gpt-4o" or "gpt-3.5-turbo"
-            messages=[
-                {
-                    "role": "system", 
-                    "content": "You are an expert SAP IT support specialist. Provide structured, professional analysis of support tickets."
-                },
-                {
-                    "role": "user", 
-                    "content": prompt
-                }
-            ],
+        # Generate enhanced analysis using Gemini
+        analysis_content = gemini_client.generate_content(
+            prompt=prompt,
             max_tokens=1500,
-            temperature=0.3  # Lower temperature for more consistent technical responses
+            temperature=0.3
         )
-        
-        # Extract and clean the response
-        analysis_content = response.choices[0].message.content.strip()
         
         # Split the response into root cause and suggested fix
         root_cause = ""
@@ -182,16 +234,16 @@ def generate_root_cause_and_fix_with_openai(similar_closed_tickets, open_ticket_
             suggested_fix = analysis_content
             root_cause = "Root cause analysis requires further investigation based on the available information."
         
-        logging.info("OpenAI GPT-enhanced analysis generated successfully")
+        logging.info("Gemini-enhanced analysis generated successfully")
         return {
             'root_cause': root_cause,
             'suggested_fix': suggested_fix
         }
         
     except Exception as e:
-        logging.error(f"Error generating OpenAI GPT-enhanced analysis: {str(e)}")
+        logging.error(f"Error generating Gemini-enhanced analysis: {str(e)}")
         
-        # Fallback to original method if OpenAI fails
+        # Fallback to original method if Gemini fails
         closing_notes = []
         for ticket in similar_closed_tickets:
             closing_note = ticket.get('Close Notes', '').strip()
@@ -201,7 +253,7 @@ def generate_root_cause_and_fix_with_openai(similar_closed_tickets, open_ticket_
         if closing_notes:
             fallback_notes = "\n".join(closing_notes)
             return {
-                'root_cause': f"Based on similar resolved tickets (OpenAI analysis failed):\n\n{fallback_notes}\n\nError: {str(e)}",
+                'root_cause': f"Based on similar resolved tickets (Gemini analysis failed):\n\n{fallback_notes}\n\nError: {str(e)}",
                 'suggested_fix': f"Follow resolution approach from similar tickets:\n\n{fallback_notes}\n\n(Note: AI enhancement failed)"
             }
         else:
@@ -213,7 +265,7 @@ def generate_root_cause_and_fix_with_openai(similar_closed_tickets, open_ticket_
 # Keep the original function name for backward compatibility
 def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=""):
     """Wrapper function to maintain compatibility"""
-    return generate_root_cause_and_fix_with_openai(similar_closed_tickets, open_ticket_description)
+    return generate_root_cause_and_fix_with_gemini(similar_closed_tickets, open_ticket_description)
 
 def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment_group_filter=None, threshold=0.75):
     """
@@ -310,7 +362,7 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
             for col in open_df.columns:
                 open_ticket_data[col] = clean_value(open_ticket_row[col])
             
-            # Generate root cause and suggested fix with OpenAI GPT enhancement
+            # Generate root cause and suggested fix with Gemini enhancement
             open_description = clean_value(open_ticket_row.get('Short Description', ''))
             analysis_result = generate_root_cause_and_fix(similar_closed, open_description)
             
@@ -382,7 +434,7 @@ def create_excel_export(results, analysis_params):
         ["Total Open Tickets Analyzed", analysis_params.get('filtered_open_tickets', 0)],
         ["Open Tickets with Matches", analysis_params.get('open_tickets_with_matches', 0)],
         ["Total Similar Closed Tickets Found", analysis_params.get('total_matches', 0)],
-        ["LLM Status", "OpenAI GPT Available" if llm is not None else "Unavailable"],
+        ["LLM Status", "Google Gemini Available" if llm is not None else "Unavailable"],
         ["Analysis Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
     ]
     
@@ -569,7 +621,7 @@ def index():
             'has_closing_note': 'Close Notes' in closed_df.columns,
             'has_resolved_by': 'Resolved by' in closed_df.columns,
             'llm_available': llm is not None,
-            'llm_model': 'OpenAI GPT-4o-mini' if llm is not None else 'None'
+            'llm_model': 'Google Gemini 2.0 Flash' if llm is not None else 'None'
         }
         
         # Check if we have minimum required columns for analysis
@@ -657,87 +709,83 @@ def analyze():
 @app.route('/llm_status')
 def llm_status():
     """
-    Check if OpenAI GPT is available and working
+    Check if Gemini API is available and working
     """
-    global openai_client
+    global gemini_client
     
-    if openai_client is None:
+    if gemini_client is None:
         return jsonify({
             'available': False,
-            'error': 'OpenAI client not initialized',
+            'error': 'Gemini client not initialized',
             'model': None
         })
     
     try:
-        # Test the OpenAI client with a simple message
-        test_response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": "Test connection"}],
-            max_tokens=10
-        )
-        return jsonify({
-            'available': True,
-            'status': 'Working',
-            'model': 'OpenAI GPT-4o-mini',
-            'test_response_length': len(test_response.choices[0].message.content)
-        })
+        # Test the Gemini client with a simple message
+        is_working, test_result = gemini_client.test_connection()
+        if is_working:
+            return jsonify({
+                'available': True,
+                'status': 'Working',
+                'model': 'Google Gemini 2.0 Flash',
+                'test_response_length': len(test_result)
+            })
+        else:
+            return jsonify({
+                'available': False,
+                'error': test_result,
+                'model': 'Google Gemini 2.0 Flash'
+            })
     except Exception as e:
-        logging.error(f"OpenAI GPT test failed: {str(e)}")
+        logging.error(f"Gemini API test failed: {str(e)}")
         return jsonify({
             'available': False,
             'error': str(e),
-            'model': 'OpenAI GPT-4o-mini'
+            'model': 'Google Gemini 2.0 Flash'
         })
 
 @app.route('/configure_llm', methods=['POST'])
 def configure_llm():
     """
-    Endpoint to configure OpenAI settings
+    Endpoint to configure Gemini settings
     """
-    global llm, openai_client
+    global llm, gemini_client
     
     try:
         data = request.get_json()
         api_key = data.get('api_key')
-        model_name = data.get('model', 'gpt-4o-mini')
-        base_url = data.get('base_url')  # Optional for custom OpenAI endpoints
+        model_name = data.get('model', 'gemini-2.0-flash')
         
-        # Configure OpenAI client
+        # Configure Gemini client
         if api_key:
-            if base_url:
-                openai_client = OpenAI(api_key=api_key, base_url=base_url)
-            else:
-                openai_client = OpenAI(api_key=api_key)
+            gemini_client = GeminiClient(api_key)
         else:
             # Use existing API key from environment or default
-            if base_url:
-                openai_client = OpenAI(base_url=base_url)
-            else:
-                openai_client = OpenAI()
+            existing_key = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY)
+            gemini_client = GeminiClient(existing_key)
         
-        llm = openai_client  # Keep compatibility
+        llm = gemini_client  # Keep compatibility
         
-        # Test the OpenAI client
-        test_response = openai_client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": "Test message"}],
-            max_tokens=10
-        )
+        # Test the Gemini client
+        is_working, test_result = gemini_client.test_connection()
         
-        logging.info(f"OpenAI client reconfigured successfully with model: {model_name}")
-        
-        return jsonify({
-            'success': True, 
-            'message': f'OpenAI GPT configured successfully with model: {model_name}',
-            'model': model_name,
-            'base_url': base_url
-        })
+        if is_working:
+            logging.info(f"Gemini client reconfigured successfully with model: {model_name}")
+            
+            return jsonify({
+                'success': True, 
+                'message': f'Google Gemini configured successfully with model: {model_name}',
+                'model': model_name,
+                'test_response': test_result[:100] + "..." if len(test_result) > 100 else test_result
+            })
+        else:
+            raise Exception(f"Gemini API test failed: {test_result}")
         
     except Exception as e:
-        logging.error(f"Failed to configure OpenAI GPT: {str(e)}")
+        logging.error(f"Failed to configure Gemini API: {str(e)}")
         return jsonify({
             'success': False, 
-            'error': f'Failed to configure OpenAI GPT: {str(e)}'
+            'error': f'Failed to configure Gemini API: {str(e)}'
         }), 500
 
 @app.route('/export_excel', methods=['POST'])
@@ -771,20 +819,21 @@ def export_excel():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
-    # Print OpenAI GPT status on startup
+    # Print Gemini API status on startup
     if llm is not None:
-        print("✅ OpenAI GPT initialized successfully - AI-enhanced suggestions available")
+        print("✅ Google Gemini API initialized successfully - AI-enhanced suggestions available")
         try:
             # Test connection
-            test_response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": "Hello"}],
-                max_tokens=5
-            )
-            print("✅ OpenAI GPT connection test successful")
+            is_working, test_result = gemini_client.test_connection()
+            if is_working:
+                print("✅ Google Gemini API connection test successful")
+                print(f"   Test response: {test_result[:100]}...")
+            else:
+                print(f"⚠️ Google Gemini API connection test failed: {test_result}")
         except Exception as e:
-            print(f"⚠️ OpenAI GPT connection test failed: {str(e)}")
+            print(f"⚠️ Google Gemini API connection test failed: {str(e)}")
     else:
-        print("⚠️ OpenAI GPT not available - will use basic suggestion format")
+        print("⚠️ Google Gemini API not available - will use basic suggestion format")
+        print("   Please check your API key and network connection")
     
     app.run(debug=True)
