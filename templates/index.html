@@ -241,6 +241,9 @@
                                     <label for="assignment_group" class="form-label"><strong>Assignment Group Filter</strong></label>
                                     <select class="form-select" id="assignment_group" name="assignment_group">
                                         <option value="All">All Assignment Groups</option>
+                                        {% for group in file_info.assignment_groups %}
+                                            <option value="{{ group }}">{{ group }}</option>
+                                        {% endfor %}
                                     </select>
                                     <div class="form-text">Filter by open ticket assignment group</div>
                                 </div>
