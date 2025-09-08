@@ -32,7 +32,7 @@ A Flask-based web application that analyzes IT tickets from Excel files and iden
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/ticket-similarity-analysis.git
+git clone https://github.com/Curi0us2003/ServiceNow-Ticket.git
 cd ticket-similarity-analysis
 ```
 
