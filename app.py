@@ -13,6 +13,10 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
+# Language detection imports
+from langdetect import detect_langs
+from langdetect.lang_detect_exception import LangDetectException
+
 # Gemini imports
 import requests
 import json
@@ -146,6 +150,78 @@ Format your response clearly with these two sections. Use professional technical
 
 If the closing notes lack sufficient detail, provide generalized SAP troubleshooting guidance applicable to this type of issue."""
 
+def detect_text_language(text):
+    """
+    Detect the language of a given text
+    Returns language code or 'unknown' if detection fails
+    """
+    if pd.isna(text) or str(text).strip() == "":
+        return 'unknown'
+    
+    try:
+        # Clean the text for better detection
+        cleaned_text = str(text).strip()
+        
+        # Skip very short texts (less than 3 characters)
+        if len(cleaned_text) < 3:
+            return 'unknown'
+        
+        # Detect languages with confidence scores
+        lang_probs = detect_langs(cleaned_text)
+        
+        # Get the most probable language
+        if lang_probs:
+            most_probable = lang_probs[0]
+            # Only return if confidence is reasonable (>0.5)
+            if most_probable.prob > 0.5:
+                return most_probable.lang
+        
+        return 'unknown'
+        
+    except (LangDetectException, Exception) as e:
+        logging.debug(f"Language detection failed for text: {str(text)[:50]}... Error: {str(e)}")
+        return 'unknown'
+
+def split_short_descriptions(open_df):
+    """
+    Separate non-English tickets from English tickets based on Short Description
+    Returns: (non_english_df, english_df)
+    """
+    logging.info("Starting language detection for ticket separation...")
+    
+    # Create a copy to work with
+    df = open_df.copy()
+    df['Short Description'] = df['Short Description'].fillna("")
+    
+    # Detect language for each Short Description
+    df['DetectedLang'] = df['Short Description'].apply(detect_text_language)
+    
+    # Define non-English languages we want to filter out
+    non_english_langs = ['ja', 'zh-cn', 'zh-tw', 'zh']
+    
+    # Filter non-English tickets
+    non_english_mask = df['DetectedLang'].isin(non_english_langs)
+    non_english_df = df[non_english_mask].copy()
+    
+    # Keep English and unknown language tickets for analysis
+    english_df = df[~non_english_mask].copy()
+    
+    # Log results
+    total_tickets = len(df)
+    non_english_count = len(non_english_df)
+    english_count = len(english_df)
+    
+    logging.info(f"Language detection results:")
+    logging.info(f"  Total tickets: {total_tickets}")
+    logging.info(f"  Non-English tickets (excluded): {non_english_count}")
+    logging.info(f"  English/Unknown tickets (included): {english_count}")
+    
+    if non_english_count > 0:
+        lang_counts = non_english_df['DetectedLang'].value_counts()
+        logging.info(f"  Non-English language breakdown: {dict(lang_counts)}")
+    
+    return non_english_df, english_df
+
 def clean_value(value):
     if pd.isna(value):
         return ""
@@ -270,7 +346,8 @@ def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=
 def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment_group_filter=None, threshold=0.75):
     """
     Find similar tickets between open and closed tickets using TF-IDF + Cosine similarity
-    with Assignment Group matching and semantic understanding
+    with Assignment Group matching and semantic understanding.
+    Now only processes English tickets for similarity analysis.
     """
     print("Starting semantic similarity analysis...")
     
@@ -281,19 +358,48 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
         if col not in closed_tickets_df.columns:
             raise ValueError(f"'{col}' column not found in closed tickets")
     
-    # Filter by Assignment Group if specified (only filter open tickets)
-    open_df = open_tickets_df.copy()
-    closed_df = closed_tickets_df.copy()
+    # Separate English and non-English tickets from open tickets
+    try:
+        non_english_open_df, english_open_df = split_short_descriptions(open_tickets_df)
+    except Exception as e:
+        logging.warning(f"Language detection failed: {str(e)}. Processing all tickets.")
+        non_english_open_df = pd.DataFrame()
+        english_open_df = open_tickets_df.copy()
     
+    # Use only English tickets for similarity analysis - RESET INDEX to avoid out of bounds
+    open_df = english_open_df.copy().reset_index(drop=True)
+    closed_df = closed_tickets_df.copy().reset_index(drop=True)
+    
+    # Filter by Assignment Group if specified (only filter open tickets)
     if assignment_group_filter and assignment_group_filter != 'All':
         open_df = open_df[open_df['Assignment group'] == assignment_group_filter].reset_index(drop=True)
         
         if open_df.empty:
-            print(f"No open tickets found with 'Assignment group' = '{assignment_group_filter}'")
-            return []
+            print(f"No English open tickets found with 'Assignment group' = '{assignment_group_filter}'")
+            return [], {
+                'total_open_tickets': len(open_tickets_df),
+                'english_open_tickets': len(english_open_df),
+                'non_english_open_tickets': len(non_english_open_df),
+                'filtered_english_open_tickets': 0
+            }
     
-    print(f"Open tickets count: {len(open_df)}")
+    print(f"Total open tickets: {len(open_tickets_df)}")
+    print(f"English open tickets: {len(english_open_df)}")
+    print(f"Non-English open tickets: {len(non_english_open_df)}")
+    print(f"English open tickets for analysis: {len(open_df)}")
     print(f"Closed tickets count: {len(closed_df)}")
+    
+    # Store language filtering stats
+    lang_stats = {
+        'total_open_tickets': len(open_tickets_df),
+        'english_open_tickets': len(english_open_df),
+        'non_english_open_tickets': len(non_english_open_df),
+        'filtered_english_open_tickets': len(open_df)
+    }
+    
+    if len(open_df) == 0:
+        print("No English open tickets available for analysis")
+        return [], lang_stats
     
     # Preprocess texts (no translation needed)
     open_texts = [preprocess_text(desc) for desc in open_df['Short Description'].tolist()]
@@ -316,31 +422,51 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
         tfidf_matrix = vectorizer.fit_transform(all_texts)
         open_vectors = tfidf_matrix[:len(open_texts)]
         closed_vectors = tfidf_matrix[len(open_texts):]
-    except ValueError:
-        print("Error in TF-IDF vectorization")
-        return []
+    except ValueError as e:
+        print(f"Error in TF-IDF vectorization: {str(e)}")
+        return [], lang_stats
     
     print("Calculating similarity matrix...")
     # Calculate similarity between open and closed tickets
     similarity_matrix = cosine_similarity(open_vectors, closed_vectors)
     
+    print(f"Similarity matrix shape: {similarity_matrix.shape}")
+    print(f"Open vectors shape: {open_vectors.shape}")
+    print(f"Closed vectors shape: {closed_vectors.shape}")
+    print(f"Open DF length: {len(open_df)}")
+    print(f"Closed DF length: {len(closed_df)}")
+    
     results = []
     
-    for i, open_ticket_row in open_df.iterrows():
+    # Use enumerate to get proper array indices instead of DataFrame indices
+    for open_idx, (df_idx, open_ticket_row) in enumerate(open_df.iterrows()):
+        if open_idx >= similarity_matrix.shape[0]:
+            print(f"Warning: Open ticket index {open_idx} exceeds similarity matrix bounds")
+            break
+            
         open_assignment_group = clean_value(open_ticket_row['Assignment group'])
         
         # Find similar closed tickets with same assignment group
         similar_closed = []
         
-        for j, closed_ticket_row in closed_df.iterrows():
+        # Use enumerate to get proper array indices for closed tickets too
+        for closed_idx, (df_closed_idx, closed_ticket_row) in enumerate(closed_df.iterrows()):
+            if closed_idx >= similarity_matrix.shape[1]:
+                print(f"Warning: Closed ticket index {closed_idx} exceeds similarity matrix bounds")
+                break
+                
             closed_assignment_group = clean_value(closed_ticket_row['Assignment group'])
             
             # Check if Assignment Group matches (case-insensitive)
             if open_assignment_group.lower() != closed_assignment_group.lower():
                 continue
             
-            # Get similarity score
-            similarity_score = similarity_matrix[i][j]
+            # Get similarity score using array indices
+            try:
+                similarity_score = similarity_matrix[open_idx][closed_idx]
+            except IndexError as e:
+                print(f"IndexError accessing similarity_matrix[{open_idx}][{closed_idx}]: {str(e)}")
+                continue
             
             if similarity_score >= threshold:
                 # Prepare closed ticket data
@@ -378,8 +504,8 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
     # Sort results by best similarity score
     results.sort(key=lambda x: x['best_similarity_score'], reverse=True)
     
-    print(f"Found {len(results)} open tickets with similar closed tickets")
-    return results
+    print(f"Found {len(results)} English open tickets with similar closed tickets")
+    return results, lang_stats
 
 def get_open_assignment_groups(open_df):
     """Get unique Assignment Groups from open tickets only"""
@@ -401,9 +527,10 @@ def validate_columns(df, dataset_name):
         'has_all_required': len(missing_required) == 0
     }
 
-def create_excel_export(results, analysis_params):
+def create_excel_export(results, analysis_params, lang_stats=None):
     """
     Create Excel file with analysis results including separate root cause and suggested fix
+    Now includes language filtering statistics
     """
     wb = Workbook()
     
@@ -426,14 +553,23 @@ def create_excel_export(results, analysis_params):
         bottom=Side(style='thin')
     )
     
-    # Summary data
+    # Summary data with language filtering info
     summary_data = [
         ["Analysis Summary", ""],
         ["Assignment Group Filter", analysis_params.get('assignment_group_filter', 'All')],
         ["Similarity Threshold", analysis_params.get('threshold_percentage', 'N/A')],
-        ["Total Open Tickets Analyzed", analysis_params.get('filtered_open_tickets', 0)],
-        ["Open Tickets with Matches", analysis_params.get('open_tickets_with_matches', 0)],
+        ["", ""],
+        ["Language Filtering Results", ""],
+        ["Total Open Tickets", lang_stats.get('total_open_tickets', 0) if lang_stats else analysis_params.get('total_open_tickets', 0)],
+        ["English Open Tickets", lang_stats.get('english_open_tickets', 0) if lang_stats else "N/A"],
+        ["Non-English Open Tickets (Excluded)", lang_stats.get('non_english_open_tickets', 0) if lang_stats else "N/A"],
+        ["English Tickets Analyzed", lang_stats.get('filtered_english_open_tickets', 0) if lang_stats else analysis_params.get('filtered_open_tickets', 0)],
+        ["", ""],
+        ["Analysis Results", ""],
+        ["English Tickets with Matches", analysis_params.get('open_tickets_with_matches', 0)],
         ["Total Similar Closed Tickets Found", analysis_params.get('total_matches', 0)],
+        ["", ""],
+        ["System Information", ""],
         ["LLM Status", "Google Gemini Available" if llm is not None else "Unavailable"],
         ["Analysis Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
     ]
@@ -443,7 +579,7 @@ def create_excel_export(results, analysis_params):
         cell_key = summary_ws.cell(row=row_idx, column=1, value=key)
         cell_value = summary_ws.cell(row=row_idx, column=2, value=value)
         
-        if row_idx == 1:  # Header row
+        if row_idx == 1 or key in ["Language Filtering Results", "Analysis Results", "System Information"]:  # Header rows
             cell_key.font = header_font
             cell_key.fill = header_fill
             cell_value.font = header_font
@@ -452,7 +588,7 @@ def create_excel_export(results, analysis_params):
         cell_key.border = border
         cell_value.border = border
     
-    summary_ws.column_dimensions['A'].width = 30
+    summary_ws.column_dimensions['A'].width = 35
     summary_ws.column_dimensions['B'].width = 40
     
     # Create Detailed Results sheet
@@ -599,16 +735,35 @@ def index():
         open_df = pd.read_excel(OPEN_TICKETS_PATH)
         closed_df = pd.read_excel(CLOSED_TICKETS_PATH)
         
+        # Get language statistics for open tickets
+        try:
+            non_english_open_df, english_open_df = split_short_descriptions(open_df)
+            lang_detection_available = True
+        except ImportError:
+            # If langdetect is not available, use all tickets
+            logging.warning("langdetect not available. All tickets will be processed.")
+            non_english_open_df = pd.DataFrame()
+            english_open_df = open_df
+            lang_detection_available = False
+        except Exception as e:
+            logging.error(f"Error in language detection: {str(e)}")
+            non_english_open_df = pd.DataFrame()
+            english_open_df = open_df
+            lang_detection_available = False
+        
         # Validate columns
         open_validation = validate_columns(open_df, 'open tickets')
         closed_validation = validate_columns(closed_df, 'closed tickets')
         
-        # Get Assignment Groups from open tickets only
-        assignment_groups = get_open_assignment_groups(open_df)
+        # Get Assignment Groups from English open tickets only
+        assignment_groups = get_open_assignment_groups(english_open_df)
         
         file_info = {
             'open_tickets_count': len(open_df),
             'closed_tickets_count': len(closed_df),
+            'english_open_tickets_count': len(english_open_df),
+            'non_english_open_tickets_count': len(non_english_open_df),
+            'lang_detection_available': lang_detection_available,
             'open_columns': open_df.columns.tolist(),
             'closed_columns': closed_df.columns.tolist(),
             'required_columns': REQUIRED_COLUMNS,
@@ -665,17 +820,17 @@ def analyze():
         
         print(f"Analysis parameters: threshold={threshold}, assignment_group={assignment_group_filter}")
         
-        # Find similar tickets
-        results = calculate_semantic_similarity(open_df, closed_df, assignment_group_filter, threshold)
+        # Find similar tickets (now includes language filtering)
+        results, lang_stats = calculate_semantic_similarity(open_df, closed_df, assignment_group_filter, threshold)
         
         # Calculate statistics
         total_open_tickets = len(open_df)
         total_closed_tickets = len(closed_df)
         
-        filtered_open_tickets = total_open_tickets
-        
-        if assignment_group_filter and assignment_group_filter != 'All':
-            filtered_open_tickets = len(open_df[open_df['Assignment group'] == assignment_group_filter])
+        # Use language-aware statistics
+        english_open_tickets = lang_stats.get('english_open_tickets', total_open_tickets)
+        non_english_open_tickets = lang_stats.get('non_english_open_tickets', 0)
+        filtered_english_open_tickets = lang_stats.get('filtered_english_open_tickets', english_open_tickets)
         
         total_matches = sum(result['total_similar_closed'] for result in results)
         
@@ -683,8 +838,10 @@ def analyze():
             'success': True,
             'results': results,
             'total_open_tickets': total_open_tickets,
+            'english_open_tickets': english_open_tickets,
+            'non_english_open_tickets': non_english_open_tickets,
             'total_closed_tickets': total_closed_tickets,
-            'filtered_open_tickets': filtered_open_tickets,
+            'filtered_open_tickets': filtered_english_open_tickets,
             'open_tickets_with_matches': len(results),
             'total_matches': total_matches,
             'threshold': threshold,
@@ -697,13 +854,66 @@ def analyze():
             'has_closing_note': 'Close Notes' in closed_df.columns,
             'has_resolved_by': 'Resolved by' in closed_df.columns,
             'llm_available': llm is not None,
-            'ai_enhanced_count': sum(1 for r in results if 'ROOT CAUSE ANALYSIS:' in r.get('root_cause', ''))
+            'ai_enhanced_count': sum(1 for r in results if 'ROOT CAUSE ANALYSIS:' in r.get('root_cause', '')),
+            'language_filtering_enabled': lang_stats.get('non_english_open_tickets', 0) > 0
         }
         
         return jsonify(response)
         
     except Exception as e:
         print(f"Analysis error: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/language_stats')
+def language_stats():
+    """
+    Endpoint to get language detection statistics without running full analysis
+    """
+    try:
+        if not os.path.exists(OPEN_TICKETS_PATH):
+            return jsonify({'success': False, 'error': 'Open tickets file not found'}), 404
+        
+        # Load open tickets
+        open_df = pd.read_excel(OPEN_TICKETS_PATH)
+        
+        # Get language statistics
+        try:
+            non_english_df, english_df = split_short_descriptions(open_df)
+            
+            # Get language breakdown
+            lang_breakdown = {}
+            if len(non_english_df) > 0:
+                lang_counts = non_english_df['DetectedLang'].value_counts()
+                lang_breakdown = dict(lang_counts)
+            
+            return jsonify({
+                'success': True,
+                'total_tickets': len(open_df),
+                'english_tickets': len(english_df),
+                'non_english_tickets': len(non_english_df),
+                'non_english_percentage': round((len(non_english_df) / len(open_df)) * 100, 1),
+                'language_breakdown': lang_breakdown,
+                'detection_available': True
+            })
+            
+        except ImportError:
+            return jsonify({
+                'success': True,
+                'total_tickets': len(open_df),
+                'english_tickets': len(open_df),
+                'non_english_tickets': 0,
+                'non_english_percentage': 0,
+                'language_breakdown': {},
+                'detection_available': False,
+                'error': 'Language detection library (langdetect) not available'
+            })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Error in language detection: {str(e)}'
+            }), 500
+            
+    except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/llm_status')
@@ -799,13 +1009,14 @@ def export_excel():
         
         results = data['results']
         analysis_params = data.get('analysis_params', {})
+        lang_stats = data.get('language_stats', None)
         
-        # Create Excel file
-        excel_buffer = create_excel_export(results, analysis_params)
+        # Create Excel file with language statistics
+        excel_buffer = create_excel_export(results, analysis_params, lang_stats)
         
         # Generate filename with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"ticket_similarity_analysis_{timestamp}.xlsx"
+        filename = f"ticket_similarity_analysis_english_only_{timestamp}.xlsx"
         
         return send_file(
             excel_buffer,
@@ -835,5 +1046,13 @@ if __name__ == '__main__':
     else:
         print("⚠️ Google Gemini API not available - will use basic suggestion format")
         print("   Please check your API key and network connection")
+    
+    # Print language detection status
+    try:
+        from langdetect import detect_langs
+        print("✅ Language detection (langdetect) available - Non-English tickets will be filtered")
+    except ImportError:
+        print("⚠️ Language detection (langdetect) not available - All tickets will be processed")
+        print("   Install with: pip install langdetect")
     
     app.run(debug=True)
