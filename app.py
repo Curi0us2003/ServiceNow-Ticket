@@ -38,7 +38,7 @@ REQUIRED_COLUMNS = ['Number', 'Short Description', 'Assignment group', 'Customer
 PREFERRED_COLUMNS = REQUIRED_COLUMNS + ['Close Notes', 'Resolved by']
 
 # Gemini API configuration
-GEMINI_API_KEY = "#API_KEY#"
+GEMINI_API_KEY = "AIzaSyDDO0rhYquX73RSIRuBNQ7JNSKDlnxXDW0"
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 class GeminiClient:
@@ -114,41 +114,67 @@ except Exception as e:
     llm = None
     gemini_client = None
 
-# Updated template for generating root cause and suggested fixes separately
-analysis_template = """You are a highly experienced SAP IT support specialist specializing in analyzing closed support tickets to provide actionable solutions for similar open tickets.
+def load_template(path: str) -> str:
+    """Load the prompt template from a .txt file."""
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
 
-Using your deep knowledge of SAP systems, modules, and official SAP Notes, consider the following inputs:
+# Load separate templates for root cause and resolution
+try:
+    root_cause_template = load_template("root_cause_template.txt")
+except FileNotFoundError:
+    # Fallback root cause template
+    root_cause_template = """
+                    Input Provided to LLM
 
-Closing Notes from Similar Tickets:
-{closing_notes}
+                    Open Ticket Description: {open_ticket_description}
 
-Open Ticket Description:
-{open_ticket_description}
+                    Closed Ticket Description(s): {close_ticket_description}
 
-Please analyze the above information and provide a structured response with TWO distinct sections:
+                    Closing Notes from Similar Closed Tickets: {closing_notes}
 
-## ROOT CAUSE ANALYSIS:
-Identify and explain the likely root causes based on patterns in the closing notes and your SAP expertise. Focus on:
-- Technical reasons for the issue
-- System configuration problems
-- User access or permission issues
-- Data inconsistencies
-- Integration problems
-- Performance bottlenecks
+                    Objective: Analyze the provided closing notes from similar resolved tickets to identify the ROOT CAUSE of the issue.
 
-## SUGGESTED RESOLUTION:
-Provide a step-by-step solution that an SAP support technician can follow, including:
-1. Immediate troubleshooting steps
-2. Configuration changes needed
-3. Relevant SAP transaction codes and tools
-4. SAP Notes or documentation references
-5. Testing procedures
-6. Preventive measures for future occurrences
-7. Escalation procedures if the steps don't resolve the issue
+                    Instructions:
+                    1. Focus ONLY on identifying WHY the issue occurs (the root cause)
+                    2. Use technical terminology relevant to the system (SAP, ServiceNow, etc.)
+                    3. Provide a brief, precise explanation of the underlying cause
+                    4. If closing notes are insufficient, state clearly: "Insufficient technical details for reliable root cause analysis"
+                    5. Include a confidence level: High, Medium, or Low
 
-Format your response clearly with these two sections. Use professional technical language suitable for SAP support staff.
+                    Output Format:
+                    Provide only the root cause analysis without resolution steps.
 
-If the closing notes lack sufficient detail, provide generalized SAP troubleshooting guidance applicable to this type of issue."""
+                    Example: "The issue occurs because billing block ZECR is active on customer master, preventing order processing. Confidence Level: High"
+                    """
+
+try:
+    resolution_template = load_template("resolution_template.txt")
+except FileNotFoundError:
+    # Fallback resolution template
+    resolution_template = """
+                    Input Provided to LLM
+
+                    Open Ticket Description: {open_ticket_description}
+
+                    Closed Ticket Description(s): {close_ticket_description}
+
+                    Closing Notes from Similar Closed Tickets: {closing_notes}
+
+                    Objective: Analyze the provided closing notes from similar resolved tickets to provide RESOLUTION STEPS.
+
+                    Instructions:
+                    1. Focus ONLY on HOW to fix the issue (resolution steps)
+                    2. Provide concise, actionable steps
+                    3. Reference specific technical artifacts (T-codes, tables, etc.)
+                    4. If closing notes are insufficient, recommend expert consultation
+                    5. Suggest diagnostic steps if applicable
+
+                    Output Format:
+                    Provide only the resolution steps without root cause analysis.
+
+                    Example: "1. Access customer master via T-code VD02, 2. Remove billing block ZECR, 3. Save changes, 4. Test order creation"
+                    """
 
 def detect_text_language(text):
     """
@@ -195,7 +221,7 @@ def split_short_descriptions(open_df):
     
     # Detect language for each Short Description
     df['DetectedLang'] = df['Short Description'].apply(detect_text_language)
-    
+
     # Define non-English languages we want to filter out
     non_english_langs = ['ja', 'zh-cn', 'zh-tw', 'zh']
     
@@ -244,82 +270,68 @@ def preprocess_text(text):
     
     return ' '.join(words).strip()
 
-def generate_root_cause_and_fix_with_gemini(similar_closed_tickets, open_ticket_description=""):
+def generate_root_cause_with_gemini(similar_closed_tickets, open_ticket_description=""):
     """
-    Generate separate root cause analysis and suggested fix for open ticket 
-    using Google Gemini instead of OpenAI
+    Generate root cause analysis using separate template and Gemini API call
     """
     global gemini_client
     
     try:
         closing_notes = []
+        closed_descriptions = []
         
-        # Extract closing notes from similar tickets
+        # Extract closing notes AND descriptions from similar tickets
         for ticket in similar_closed_tickets:
+            # Get closing notes
             closing_note = ticket.get('Close Notes', '').strip()
             if closing_note and closing_note.lower() not in ['n/a', 'na', '', 'none', 'null', 'not applicable']:
                 closing_notes.append(f"• {closing_note}")
+            
+            # Get closed ticket descriptions
+            closed_description = ticket.get('Short Description', '').strip()
+            if closed_description:
+                ticket_number = ticket.get('Number', 'Unknown')
+                closed_descriptions.append(f"Ticket {ticket_number}: {closed_description}")
         
         # If no meaningful closing notes found
         if not closing_notes:
-            return {
-                'root_cause': "No meaningful closing notes available from similar tickets for root cause analysis.",
-                'suggested_fix': "Please investigate manually or contact the appropriate support team for detailed analysis."
-            }
+            return "No meaningful closing notes available from similar tickets for root cause analysis."
         
         # If only one closing note or Gemini client is not available, return basic format
         if len(closing_notes) == 1 or gemini_client is None:
             basic_notes = "\n".join(closing_notes)
-            return {
-                'root_cause': f"Based on similar resolved ticket:\n\n{basic_notes}\n\n(Manual analysis required for detailed root cause identification)",
-                'suggested_fix': f"Follow the resolution approach from similar ticket:\n\n{basic_notes}" + 
-                               ("\n\n(Note: AI enhancement unavailable - Gemini client not initialized)" if gemini_client is None else "")
-            }
+            if gemini_client is None:
+                return f"Based on similar resolved ticket:\n\n{basic_notes}\n\n(Manual analysis required - Gemini client not available)"
+            else:
+                return f"Based on similar resolved ticket:\n\n{basic_notes}\n\n(Manual analysis required for detailed root cause identification)"
         
-        # Use Gemini to generate enhanced analysis when multiple closing notes exist
+        # Use Gemini to generate root cause analysis when multiple closing notes exist
         closing_notes_text = "\n".join(closing_notes)
+        closed_descriptions_text = "\n".join(closed_descriptions) if closed_descriptions else "No closed ticket descriptions available."
         
-        # Create the prompt
-        prompt = analysis_template.format(
-            closing_notes=closing_notes_text,
-            open_ticket_description=open_ticket_description
+        # Create the prompt for root cause analysis
+        prompt = root_cause_template.format(
+            open_ticket_description=open_ticket_description,
+            close_ticket_description=closed_descriptions_text,
+            closing_notes=closing_notes_text
         )
         
-        logging.info(f"Generating Gemini-enhanced analysis for ticket with {len(closing_notes)} similar closing notes")
+        logging.info(f"Generating Gemini root cause analysis for ticket with {len(closing_notes)} similar closing notes")
         
-        # Generate enhanced analysis using Gemini
-        analysis_content = gemini_client.generate_content(
+        # Generate root cause analysis using Gemini
+        root_cause_content = gemini_client.generate_content(
             prompt=prompt,
-            max_tokens=1500,
+            max_tokens=800,  # Shorter for just root cause
             temperature=0.3
         )
         
-        # Split the response into root cause and suggested fix
-        root_cause = ""
-        suggested_fix = ""
-        
-        if "## ROOT CAUSE ANALYSIS:" in analysis_content and "## SUGGESTED RESOLUTION:" in analysis_content:
-            parts = analysis_content.split("## SUGGESTED RESOLUTION:")
-            root_cause_part = parts[0].replace("## ROOT CAUSE ANALYSIS:", "").strip()
-            suggested_fix_part = parts[1].strip()
-            
-            root_cause = root_cause_part if root_cause_part else "Root cause analysis not clearly identified in the response."
-            suggested_fix = suggested_fix_part if suggested_fix_part else "Suggested resolution not clearly provided in the response."
-        else:
-            # If the format is not as expected, treat the whole response as suggested fix
-            suggested_fix = analysis_content
-            root_cause = "Root cause analysis requires further investigation based on the available information."
-        
-        logging.info("Gemini-enhanced analysis generated successfully")
-        return {
-            'root_cause': root_cause,
-            'suggested_fix': suggested_fix
-        }
+        logging.info("Gemini root cause analysis generated successfully")
+        return root_cause_content
         
     except Exception as e:
-        logging.error(f"Error generating Gemini-enhanced analysis: {str(e)}")
+        logging.error(f"Error generating Gemini root cause analysis: {str(e)}")
         
-        # Fallback to original method if Gemini fails
+        # Fallback to basic method if Gemini fails
         closing_notes = []
         for ticket in similar_closed_tickets:
             closing_note = ticket.get('Close Notes', '').strip()
@@ -328,15 +340,100 @@ def generate_root_cause_and_fix_with_gemini(similar_closed_tickets, open_ticket_
         
         if closing_notes:
             fallback_notes = "\n".join(closing_notes)
-            return {
-                'root_cause': f"Based on similar resolved tickets (Gemini analysis failed):\n\n{fallback_notes}\n\nError: {str(e)}",
-                'suggested_fix': f"Follow resolution approach from similar tickets:\n\n{fallback_notes}\n\n(Note: AI enhancement failed)"
-            }
+            return f"Based on similar resolved tickets (Gemini analysis failed):\n\n{fallback_notes}\n\nError: {str(e)}"
         else:
-            return {
-                'root_cause': "No closing notes available for root cause analysis",
-                'suggested_fix': "No resolution guidance available from similar tickets"
-            }
+            return "No closing notes available for root cause analysis"
+
+def generate_resolution_with_gemini(similar_closed_tickets, open_ticket_description=""):
+    """
+    Generate resolution steps using separate template and Gemini API call
+    """
+    global gemini_client
+    
+    try:
+        closing_notes = []
+        closed_descriptions = []
+        
+        # Extract closing notes AND descriptions from similar tickets
+        for ticket in similar_closed_tickets:
+            # Get closing notes
+            closing_note = ticket.get('Close Notes', '').strip()
+            if closing_note and closing_note.lower() not in ['n/a', 'na', '', 'none', 'null', 'not applicable']:
+                closing_notes.append(f"• {closing_note}")
+            
+            # Get closed ticket descriptions
+            closed_description = ticket.get('Short Description', '').strip()
+            if closed_description:
+                ticket_number = ticket.get('Number', 'Unknown')
+                closed_descriptions.append(f"Ticket {ticket_number}: {closed_description}")
+        
+        # If no meaningful closing notes found
+        if not closing_notes:
+            return "Please investigate manually or contact the appropriate support team for detailed analysis."
+        
+        # If only one closing note or Gemini client is not available, return basic format
+        if len(closing_notes) == 1 or gemini_client is None:
+            basic_notes = "\n".join(closing_notes)
+            suffix = "\n\n(Note: AI enhancement unavailable - Gemini client not initialized)" if gemini_client is None else ""
+            return f"Follow the resolution approach from similar ticket:\n\n{basic_notes}{suffix}"
+        
+        # Use Gemini to generate resolution steps when multiple closing notes exist
+        closing_notes_text = "\n".join(closing_notes)
+        closed_descriptions_text = "\n".join(closed_descriptions) if closed_descriptions else "No closed ticket descriptions available."
+        
+        # Create the prompt for resolution steps
+        prompt = resolution_template.format(
+            open_ticket_description=open_ticket_description,
+            close_ticket_description=closed_descriptions_text,
+            closing_notes=closing_notes_text
+        )
+        
+        logging.info(f"Generating Gemini resolution steps for ticket with {len(closing_notes)} similar closing notes")
+        
+        # Generate resolution steps using Gemini
+        resolution_content = gemini_client.generate_content(
+            prompt=prompt,
+            max_tokens=800,  # Shorter for just resolution
+            temperature=0.3
+        )
+        
+        logging.info("Gemini resolution steps generated successfully")
+        return resolution_content
+        
+    except Exception as e:
+        logging.error(f"Error generating Gemini resolution steps: {str(e)}")
+        
+        # Fallback to basic method if Gemini fails
+        closing_notes = []
+        for ticket in similar_closed_tickets:
+            closing_note = ticket.get('Close Notes', '').strip()
+            if closing_note and closing_note.lower() not in ['n/a', 'na', '']:
+                closing_notes.append(f"• {closing_note}")
+        
+        if closing_notes:
+            fallback_notes = "\n".join(closing_notes)
+            return f"Follow resolution approach from similar tickets:\n\n{fallback_notes}\n\n(Note: AI enhancement failed)"
+        else:
+            return "No resolution guidance available from similar tickets"
+
+def generate_root_cause_and_fix_with_gemini(similar_closed_tickets, open_ticket_description=""):
+    """
+    Generate separate root cause analysis and suggested fix using two separate Gemini API calls
+    """
+    logging.info("Starting separate root cause and resolution generation...")
+    
+    # Generate root cause analysis with first API call
+    root_cause = generate_root_cause_with_gemini(similar_closed_tickets, open_ticket_description)
+    
+    # Generate resolution steps with second API call
+    suggested_fix = generate_resolution_with_gemini(similar_closed_tickets, open_ticket_description)
+    
+    logging.info("Completed separate root cause and resolution generation")
+    
+    return {
+        'root_cause': root_cause,
+        'suggested_fix': suggested_fix
+    }
 
 # Keep the original function name for backward compatibility
 def generate_root_cause_and_fix(similar_closed_tickets, open_ticket_description=""):
@@ -488,7 +585,7 @@ def calculate_semantic_similarity(open_tickets_df, closed_tickets_df, assignment
             for col in open_df.columns:
                 open_ticket_data[col] = clean_value(open_ticket_row[col])
             
-            # Generate root cause and suggested fix with Gemini enhancement
+            # Generate root cause and suggested fix with separate Gemini calls
             open_description = clean_value(open_ticket_row.get('Short Description', ''))
             analysis_result = generate_root_cause_and_fix(similar_closed, open_description)
             
@@ -570,7 +667,7 @@ def create_excel_export(results, analysis_params, lang_stats=None):
         ["Total Similar Closed Tickets Found", analysis_params.get('total_matches', 0)],
         ["", ""],
         ["System Information", ""],
-        ["LLM Status", "Google Gemini Available" if llm is not None else "Unavailable"],
+        ["LLM Status", "Google Gemini Available (Separate API Calls)" if llm is not None else "Unavailable"],
         ["Analysis Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
     ]
     
@@ -776,7 +873,7 @@ def index():
             'has_closing_note': 'Close Notes' in closed_df.columns,
             'has_resolved_by': 'Resolved by' in closed_df.columns,
             'llm_available': llm is not None,
-            'llm_model': 'Google Gemini 2.0 Flash' if llm is not None else 'None'
+            'llm_model': 'Google Gemini 2.0 Flash (Separate API Calls)' if llm is not None else 'None'
         }
         
         # Check if we have minimum required columns for analysis
@@ -820,7 +917,7 @@ def analyze():
         
         print(f"Analysis parameters: threshold={threshold}, assignment_group={assignment_group_filter}")
         
-        # Find similar tickets (now includes language filtering)
+        # Find similar tickets (now includes language filtering and separate API calls)
         results, lang_stats = calculate_semantic_similarity(open_df, closed_df, assignment_group_filter, threshold)
         
         # Calculate statistics
@@ -833,6 +930,9 @@ def analyze():
         filtered_english_open_tickets = lang_stats.get('filtered_english_open_tickets', english_open_tickets)
         
         total_matches = sum(result['total_similar_closed'] for result in results)
+        
+        # Count AI-enhanced results (now from separate API calls)
+        ai_enhanced_count = sum(1 for r in results if len(r.get('root_cause', '').strip()) > 50 and gemini_client is not None)
         
         response = {
             'success': True,
@@ -854,8 +954,9 @@ def analyze():
             'has_closing_note': 'Close Notes' in closed_df.columns,
             'has_resolved_by': 'Resolved by' in closed_df.columns,
             'llm_available': llm is not None,
-            'ai_enhanced_count': sum(1 for r in results if 'ROOT CAUSE ANALYSIS:' in r.get('root_cause', '')),
-            'language_filtering_enabled': lang_stats.get('non_english_open_tickets', 0) > 0
+            'ai_enhanced_count': ai_enhanced_count,
+            'language_filtering_enabled': lang_stats.get('non_english_open_tickets', 0) > 0,
+            'separate_api_calls': True  # Flag to indicate separate API calls are used
         }
         
         return jsonify(response)
@@ -927,7 +1028,8 @@ def llm_status():
         return jsonify({
             'available': False,
             'error': 'Gemini client not initialized',
-            'model': None
+            'model': None,
+            'separate_calls': False
         })
     
     try:
@@ -938,20 +1040,24 @@ def llm_status():
                 'available': True,
                 'status': 'Working',
                 'model': 'Google Gemini 2.0 Flash',
-                'test_response_length': len(test_result)
+                'test_response_length': len(test_result),
+                'separate_calls': True,
+                'enhancement': 'Separate API calls for Root Cause and Resolution'
             })
         else:
             return jsonify({
                 'available': False,
                 'error': test_result,
-                'model': 'Google Gemini 2.0 Flash'
+                'model': 'Google Gemini 2.0 Flash',
+                'separate_calls': False
             })
     except Exception as e:
         logging.error(f"Gemini API test failed: {str(e)}")
         return jsonify({
             'available': False,
             'error': str(e),
-            'model': 'Google Gemini 2.0 Flash'
+            'model': 'Google Gemini 2.0 Flash',
+            'separate_calls': False
         })
 
 @app.route('/configure_llm', methods=['POST'])
@@ -984,9 +1090,10 @@ def configure_llm():
             
             return jsonify({
                 'success': True, 
-                'message': f'Google Gemini configured successfully with model: {model_name}',
+                'message': f'Google Gemini configured successfully with model: {model_name} (Separate API Calls)',
                 'model': model_name,
-                'test_response': test_result[:100] + "..." if len(test_result) > 100 else test_result
+                'test_response': test_result[:100] + "..." if len(test_result) > 100 else test_result,
+                'separate_calls': True
             })
         else:
             raise Exception(f"Gemini API test failed: {test_result}")
@@ -1016,7 +1123,7 @@ def export_excel():
         
         # Generate filename with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"ticket_similarity_analysis_english_only_{timestamp}.xlsx"
+        filename = f"ticket_similarity_analysis_separate_calls_{timestamp}.xlsx"
         
         return send_file(
             excel_buffer,
@@ -1033,6 +1140,7 @@ if __name__ == '__main__':
     # Print Gemini API status on startup
     if llm is not None:
         print("✅ Google Gemini API initialized successfully - AI-enhanced suggestions available")
+        print("   🔄 Using separate API calls for Root Cause and Resolution analysis")
         try:
             # Test connection
             is_working, test_result = gemini_client.test_connection()
