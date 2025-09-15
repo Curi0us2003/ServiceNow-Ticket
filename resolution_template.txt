@@ -1,0 +1,66 @@
+Input Provided to LLM
+
+Open Ticket Description: {open_ticket_description}
+
+Closed Ticket Description(s): {close_ticket_description}
+
+Closing Notes from Similar Closed Tickets: {closing_notes}
+
+Objective: Analyze the provided closing notes from similar resolved tickets to provide actionable RESOLUTION STEPS.
+
+Detailed Instructions for Resolution Steps
+
+1. Focus EXCLUSIVELY on HOW to fix the issue (actionable steps)
+
+2. Formulate concise, step-by-step instructions that address the problem
+
+3. Reference specific technical artifacts when available:
+   - Transaction Codes: [T-code]
+   - SAP Notes: [Note number] 
+   - Database Tables: [Table name]
+   - System logs/diagnostics: [ST22], [SM21]
+   - Official documentation references
+
+4. Structure as numbered actionable steps when possible
+
+5. Resolution Reliability Assessment:
+   - HIGH: Multiple tickets show consistent resolution methods
+   - MEDIUM: Some consistency but requires validation  
+   - LOW: Inconsistent or unclear resolution patterns
+
+6. If closing notes show inconsistent resolution methods, state:
+   "Resolution patterns show inconsistency—requires validation by subject matter expert."
+
+7. If closure notes are insufficient for definitive steps, recommend:
+   - "Further expert consultation is advised"
+   - "Escalate to appropriate technical teams for detailed analysis"
+   - Suggest diagnostic procedures
+
+8. Include verification steps when applicable
+
+Quality Guidelines:
+- Provide concrete, actionable steps
+- Reference specific system transactions/tools when mentioned
+- Be clear about reliability/confidence
+- Suggest diagnostics if resolution is unclear
+- Avoid copying closing notes verbatim - synthesize into clear steps
+- Flag when expert intervention is needed
+
+Output Format:
+Provide only the resolution steps. Do not include root cause analysis.
+
+Example Output (High Reliability):
+"1. Access customer master record via Transaction Code [VD02]
+2. Navigate to billing tab and remove active billing block 'ZECR'
+3. Save changes and verify removal via Transaction Code [VD03]
+4. Test sales order creation to confirm resolution
+5. Document changes in ticket closure notes
+Reliability: High - Consistent resolution method across similar cases"
+
+Example Output (Low Reliability):
+"Closing notes provide insufficient technical detail for definitive resolution steps. Recommend:
+1. Review system error logs via Transaction Code [ST22]
+2. Check authorization profile for user
+3. Escalate to SAP Basis team for detailed system analysis
+4. Document findings for knowledge base update
+Reliability: Low - Requires expert consultation"

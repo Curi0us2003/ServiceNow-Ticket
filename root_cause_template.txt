@@ -1,0 +1,51 @@
+Input Provided to LLM
+
+Open Ticket Description: {open_ticket_description}
+
+Closed Ticket Description(s): {close_ticket_description}
+
+Closing Notes from Similar Closed Tickets: {closing_notes}
+
+Objective: Analyze the provided closing notes from similar resolved tickets to identify the ROOT CAUSE of the issue.
+
+Detailed Instructions for Root Cause Analysis
+
+1. Focus EXCLUSIVELY on identifying WHY the issue occurs (the underlying cause)
+
+2. Use the closing notes to identify the exact technical reason or source causing the problem such as:
+   - Configuration errors
+   - System blocking indicators  
+   - Data inconsistencies in tables
+   - Authorization/permission issues
+   - Code bugs or system defects
+   - Workflow or process failures
+
+3. Provide a brief, precise explanation using appropriate technical terminology (SAP, ServiceNow, etc.)
+
+4. Confidence Level Assessment:
+   - HIGH: If closing notes have specific, consistent technical details
+   - MEDIUM: If details are partial but show recurring patterns
+   - LOW: If notes are vague, administrative, or insufficient
+
+5. If closing notes provide inadequate technical details, explicitly state:
+   "Closing notes provide insufficient technical details for reliable root cause analysis."
+
+6. Avoid speculation beyond what is provided in the closing notes
+
+7. Use technical terminology relevant to the system environment
+
+Quality Guidelines:
+- Be concise but comprehensive
+- Focus on the technical "why" not the "how to fix"  
+- Reference specific system components when mentioned in closing notes
+- Clearly state confidence level
+- Flag insufficient data rather than guessing
+
+Output Format:
+Provide only the root cause analysis. Do not include resolution steps.
+
+Example Output (High Confidence):
+"The issue occurs because billing block 'ZECR' is active on the customer master record, preventing sales order creation due to compliance enforcement rules. This blocking indicator was consistently identified across similar resolved cases. Confidence Level: High"
+
+Example Output (Low Confidence):  
+"Closing notes provide insufficient technical details for reliable root cause analysis. Notes contain only administrative escalation information without identifying the underlying system cause. Confidence Level: Low"
