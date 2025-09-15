@@ -38,7 +38,7 @@ REQUIRED_COLUMNS = ['Number', 'Short Description', 'Assignment group', 'Customer
 PREFERRED_COLUMNS = REQUIRED_COLUMNS + ['Close Notes', 'Resolved by']
 
 # Gemini API configuration
-GEMINI_API_KEY = "AIzaSyDDO0rhYquX73RSIRuBNQ7JNSKDlnxXDW0"
+GEMINI_API_KEY = "#API_KEY#"
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 class GeminiClient:
